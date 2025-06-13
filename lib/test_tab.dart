@@ -53,7 +53,10 @@ class _TestTabState extends State<TestTab> {
       body: PageView(
         controller: _controller,
         scrollDirection: Axis.vertical,
-        children: [FlashcardScreen(words: widget.words)],
+        children: [
+          FlashcardScreen(words: widget.words),
+          const _BottomBoxes(), // ✅ Màn hình 2
+        ],
       ),
     );
   }
@@ -203,39 +206,101 @@ class _FlashcardScreenState extends State<FlashcardScreen> {
   }
 }
 
+Widget buildBoxTuMoi() {
+  return Card(
+    margin: EdgeInsets.all(8),
+    child: Padding(
+      padding: EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "Từ mới",
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          // TODO: Hiển thị danh sách từ cần luyện tập
+        ],
+      ),
+    ),
+  );
+}
+
+Widget buildBoxTuDaHoc() {
+  return Card(
+    margin: EdgeInsets.all(8),
+    child: Padding(
+      padding: EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "Từ đã học",
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          // TODO: Hiển thị 10 từ ngẫu nhiên để luyện
+        ],
+      ),
+    ),
+  );
+}
+
+Widget buildBoxFlashCardTuMoi() {
+  return Card(
+    margin: EdgeInsets.all(8),
+    child: Padding(
+      padding: EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "Flash Card từ mới",
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          // TODO: Hiển thị ảnh + chọn nghĩa đúng
+        ],
+      ),
+    ),
+  );
+}
+
 class _BottomBoxes extends StatelessWidget {
+  const _BottomBoxes();
+
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Expanded(
-          child: Row(
-            children: [
-              _buildBox('Từ mới'),
-              _buildBox('Từ đã học'),
-              _buildBox('Flash Card từ mới'),
-            ],
-          ),
+    return Scaffold(
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _buildBox(title: 'Từ mới', color: Colors.orange),
+            const SizedBox(height: 20),
+            _buildBox(title: 'Từ chưa học', color: Colors.blue),
+            const SizedBox(height: 20),
+            _buildBox(title: 'Từ đã học', color: Colors.green),
+          ],
         ),
-      ],
+      ),
     );
   }
 
-  Widget _buildBox(String title) {
-    return Expanded(
-      child: Container(
-        margin: const EdgeInsets.all(8),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.blue.shade50,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.blueAccent),
-        ),
-        child: Center(
-          child: Text(
-            title,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            textAlign: TextAlign.center,
+  Widget _buildBox({required String title, required Color color}) {
+    return Container(
+      height: 100,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.2),
+        border: Border.all(color: color, width: 2),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Center(
+        child: Text(
+          title,
+          style: TextStyle(
+            fontSize: 22,
+            color: color,
+            fontWeight: FontWeight.bold,
           ),
         ),
       ),
