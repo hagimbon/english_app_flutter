@@ -36,6 +36,22 @@ class _AddWordScreenState extends State<AddWordScreen> {
 
   bool get isEditMode => widget.initialData != null;
 
+  Future<void> saveWord() async {
+    final newWord = {
+      'word': _englishController.text.trim(),
+      'meaning': _meaningController.text.trim(),
+      'phonetic': _phoneticController.text.trim(),
+      'usage': _usageController.text.trim(),
+      'examples': examples, // danh sách ví dụ dạng [{en:..., vi:...}]
+      'imageBytes': imageBytes,
+      'isLearned': false,
+    };
+
+    await FirebaseFirestore.instance.collection('words').add(newWord);
+
+    Navigator.pop(context); // Quay lại màn hình từ chưa học
+  }
+
   Future<void> _pickImage() async {
     final XFile? pickedFile = await _picker.pickImage(
       source: ImageSource.gallery,
