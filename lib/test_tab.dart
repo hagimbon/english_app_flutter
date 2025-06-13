@@ -54,8 +54,8 @@ class _TestTabState extends State<TestTab> {
         controller: _controller,
         scrollDirection: Axis.vertical,
         children: [
-          FlashcardScreen(words: widget.words),
-          const _BottomBoxes(), // ✅ Màn hình 2
+          FlashcardScreen(words: widget.words), // Box 1: Flash Card
+          _PracticeBoxes(words: widget.words), // Box 2: 3 Boxes
         ],
       ),
     );
@@ -301,6 +301,52 @@ class _BottomBoxes extends StatelessWidget {
             fontSize: 22,
             color: color,
             fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PracticeBoxes extends StatelessWidget {
+  final List<Map<String, dynamic>> words;
+  const _PracticeBoxes({required this.words});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                _buildBox(context, 'Từ mới'),
+                const SizedBox(width: 8),
+                _buildBox(context, 'Từ chưa học'),
+                const SizedBox(width: 8),
+                _buildBox(context, 'Từ đã học'),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBox(BuildContext ctx, String title) {
+    return Expanded(
+      child: Card(
+        color: Colors.white,
+        elevation: 2,
+        child: InkWell(
+          onTap: () {
+            ScaffoldMessenger.of(
+              ctx,
+            ).showSnackBar(SnackBar(content: Text('Bấm vào "$title"')));
+          },
+          child: Center(
+            child: Text(title, style: const TextStyle(fontSize: 18)),
           ),
         ),
       ),
