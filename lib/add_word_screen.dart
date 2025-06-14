@@ -37,19 +37,34 @@ class _AddWordScreenState extends State<AddWordScreen> {
   bool get isEditMode => widget.initialData != null;
 
   Future<void> saveWord() async {
-    final newWord = {
+    final wordData = {
       'word': _englishController.text.trim(),
       'meaning': _meaningController.text.trim(),
       'phonetic': _phoneticController.text.trim(),
       'usage': _usageController.text.trim(),
-      'examples': examples, // danh sách ví dụ dạng [{en:..., vi:...}]
-      'imageBytes': imageBytes,
-      'isLearned': false,
+      'examples': List<Map<String, String>>.generate(
+        exampleEnControllers.length,
+        (i) => {
+          'en': exampleEnControllers[i].text.trim(),
+          'vi': exampleViControllers[i].text.trim(),
+        },
+      ),
+      'imageBytes': _previewImageBytes,
+      'isLearned':
+          widget.initialData != null &&
+          widget.initialData!['isLearned'] == true,
     };
 
-    await FirebaseFirestore.instance.collection('words').add(newWord);
+    if (widget.initialData != null && widget.initialData!['id'] != null) {
+      await FirebaseFirestore.instance
+          .collection('words')
+          .doc(widget.initialData!['id'])
+          .set(wordData);
+    } else {
+      await FirebaseFirestore.instance.collection('words').add(wordData);
+    }
 
-    Navigator.pop(context); // Quay lại màn hình từ chưa học
+    Navigator.pop(context);
   }
 
   Future<void> _pickImage() async {
@@ -114,55 +129,6 @@ class _AddWordScreenState extends State<AddWordScreen> {
     super.dispose();
   }
 
-  void _submit() async {
-    final word = _englishController.text.trim();
-    final meaning = _meaningController.text.trim();
-    final phonetic = _phoneticController.text.trim();
-    final usage = _usageController.text.trim();
-
-    if (word.isEmpty || meaning.isEmpty) return;
-
-    if (!isEditMode &&
-        widget.existingWords.any((element) => element['word'] == word)) {
-      showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('Dữ liệu trùng'),
-          content: const Text('Từ này đã tồn tại trong danh sách.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Đóng'),
-            ),
-          ],
-        ),
-      );
-      return;
-    }
-
-    List<Map<String, String>> examples = [];
-    for (int i = 0; i < exampleEnControllers.length; i++) {
-      final en = exampleEnControllers[i].text.trim();
-      final vi = exampleViControllers[i].text.trim();
-      if (en.isNotEmpty || vi.isNotEmpty) {
-        examples.add({'en': en, 'vi': vi});
-      }
-    }
-
-    await FirebaseFirestore.instance.collection('words').add({
-      'word': word,
-      'meaning': meaning,
-      'phonetic': phonetic,
-      'usage': usage,
-      'examples': examples,
-      'imageBytes': _previewImageBytes,
-      'createdAt': Timestamp.now(), // để sắp xếp theo thời gian
-      'isLearned': false, // từ mới mặc định là chưa học
-    });
-
-    Navigator.pop(context); // quay lại sau khi ghi xong
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -192,7 +158,7 @@ class _AddWordScreenState extends State<AddWordScreen> {
               const SizedBox(height: 20),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                onPressed: _submit,
+                onPressed: saveWord,
                 child: Text(isEditMode ? 'Lưu' : 'Thêm'),
               ),
               const SizedBox(height: 16),
