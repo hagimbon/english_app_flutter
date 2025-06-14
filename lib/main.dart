@@ -264,6 +264,7 @@ class _WordListTabState extends State<WordListTab> {
                                       builder: (context) => AddWordScreen(
                                         existingWords: widget.words,
                                         initialData: word,
+                                        wordId: word['id'], // ✅ Thêm dòng này
                                       ),
                                     ),
                                   );
