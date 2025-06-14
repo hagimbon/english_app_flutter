@@ -141,23 +141,31 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
       ),
     );
 
-    if (result != null && result is Map) {
-      if (result['success'] == true) {
-        if (result['offline'] == true) {
-          // ✅ Lưu vào pendingQueue
-          setState(() {
-            pendingQueue.add(result['word']);
-            unlearnedWords.add(result['word']); // vẫn hiển thị trên app
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('🔃 Đã lưu offline, sẽ đồng bộ khi có mạng'),
-            ),
-          );
-        } else {
-          await loadWords(); // online thì load từ Firebase lại
+    if (result != null && result['success'] == true) {
+      if (result['updatedWord'] != null) {
+        // ✅ Nếu là edit online
+        final updated = result['updatedWord'] as Map<String, dynamic>;
+        final id = result['wordId'];
+        final index = unlearnedWords.indexWhere((e) => e['id'] == id);
+        if (index != -1) {
+          unlearnedWords[index] = {'id': id, ...updated};
         }
+      } else if (result['offline'] == true) {
+        // ✅ Nếu đang offline
+        final word = result['word'] as Map<String, dynamic>;
+        final id = 'offline_${DateTime.now().millisecondsSinceEpoch}';
+        unlearnedWords.add({'id': id, ...word});
+        pendingQueue.add({'id': id, ...word});
+      } else {
+        // ✅ Nếu đang online và thêm mới
+        final newWords = await fetchWords(isLearned: false);
+        setState(() {
+          unlearnedWords.clear();
+          unlearnedWords.addAll(newWords);
+        });
       }
+
+      setState(() {}); // ✅ Cập nhật lại hiển thị
     }
   }
 
@@ -359,7 +367,8 @@ class _WordListTabState extends State<WordListTab> {
                                     ),
                                   );
 
-                                  if (result == true) {
+                                  if (result != null &&
+                                      result['success'] == true) {
                                     // 👉 nếu từ đã được chỉnh sửa thì nạp lại từ Firebase
                                     final newWords = await fetchWords(
                                       isLearned: widget.title == 'Từ đã học',
