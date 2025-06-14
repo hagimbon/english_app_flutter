@@ -51,7 +51,7 @@ class _AddWordScreenState extends State<AddWordScreen> {
           'vi': exampleViControllers[i].text.trim(),
         },
       ),
-      'imageBytes': _previewImageBytes,
+      'imageBytes': _previewImageBytes ?? imageBytes,
       'isLearned':
           widget.initialData != null &&
           widget.initialData!['isLearned'] == true,
@@ -59,17 +59,13 @@ class _AddWordScreenState extends State<AddWordScreen> {
 
     if (isEditMode) {
       final docId = widget.wordId ?? widget.initialData?['id'];
-      final collectionName = widget.initialData!['isLearned'] == true
-          ? 'learnedWords'
-          : 'unlearnedWords';
-
       await FirebaseFirestore.instance
-          .collection(collectionName)
+          .collection('words')
           .doc(docId)
           .update(wordData);
     } else {
       await FirebaseFirestore.instance
-          .collection('unlearnedWords')
+          .collection('words') // ✅ dùng chung 1 collection
           .add(wordData);
     }
 

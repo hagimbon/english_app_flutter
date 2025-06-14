@@ -258,17 +258,27 @@ class _WordListTabState extends State<WordListTab> {
                               IconButton(
                                 icon: const Icon(Icons.edit),
                                 onPressed: () async {
-                                  await Navigator.push(
+                                  final result = await Navigator.push(
                                     context,
                                     MaterialPageRoute(
                                       builder: (context) => AddWordScreen(
                                         existingWords: widget.words,
                                         initialData: word,
-                                        wordId: word['id'], // ✅ Thêm dòng này
+                                        wordId: word['id'],
                                       ),
                                     ),
                                   );
-                                  setState(() {}); // Cập nhật sau khi sửa
+
+                                  if (result == true) {
+                                    // 👉 nếu từ đã được chỉnh sửa thì nạp lại từ Firebase
+                                    final newWords = await fetchWords(
+                                      isLearned: widget.title == 'Từ đã học',
+                                    );
+                                    setState(() {
+                                      widget.words.clear();
+                                      widget.words.addAll(newWords);
+                                    });
+                                  }
                                 },
                               ),
                             ],
