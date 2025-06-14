@@ -54,7 +54,7 @@ class EnglishApp extends StatelessWidget {
     return MaterialApp(
       title: 'Từ vựng tiếng Anh',
       theme: ThemeData.light(),
-      home: const MainTabNavigator(),
+      home: const MainTabNavigator(), // ✅ đúng chỗ
     );
   }
 }
@@ -105,7 +105,10 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
   List<Widget> get _tabs => [
     WordListTab(words: unlearnedWords, title: 'Từ chưa học'),
     WordListTab(words: learnedOnly, title: 'Từ đã học'),
-    TestTab(words: learnedOnly),
+    TestTab(
+      words: learnedOnly,
+      unlearnedWords: unlearnedWords,
+    ), // ✅ thêm dòng này
   ];
 
   @override
@@ -136,7 +139,13 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
 
 class TestTab extends StatefulWidget {
   final List<Map<String, dynamic>> words;
-  const TestTab({super.key, required this.words});
+  final List<Map<String, dynamic>> unlearnedWords; // ✅ thêm dòng này
+
+  const TestTab({
+    super.key,
+    required this.words,
+    required this.unlearnedWords, // ✅ thêm dòng này
+  });
 
   @override
   State<TestTab> createState() => _TestTabState();
@@ -170,8 +179,10 @@ class _TestTabState extends State<TestTab> {
         scrollDirection: Axis.vertical,
         children: [
           FlashcardScreen(words: widget.words),
-          // const _BottomBoxes(), // Tạm thời bỏ vì chưa cần đến
-          Container(),
+          PracticeBoxes(
+            words: widget.words,
+            unlearnedWords: widget.unlearnedWords, // ✅ truyền thêm dữ liệu
+          ),
         ],
       ),
     );
@@ -397,7 +408,12 @@ class _WordListTabState extends State<WordListTab> {
 
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => TestTab(words: selectedWords)),
+      MaterialPageRoute(
+        builder: (context) => TestTab(
+          words: selectedWords,
+          unlearnedWords: [], // 👈 tạm thời truyền danh sách rỗng nếu không cần
+        ),
+      ),
     );
   }
 

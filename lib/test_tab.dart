@@ -16,17 +16,15 @@ class EnglishApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Từ vựng tiếng Anh',
-      theme: ThemeData.light(),
-      home: TestTab(words: learnedWords),
-    );
+    return MaterialApp(title: 'Từ vựng tiếng Anh', theme: ThemeData.light());
   }
 }
 
 class TestTab extends StatefulWidget {
   final List<Map<String, dynamic>> words;
-  const TestTab({super.key, required this.words});
+  final List<Map<String, dynamic>> unlearnedWords;
+
+  const TestTab({super.key, required this.words, required this.unlearnedWords});
 
   @override
   State<TestTab> createState() => _TestTabState();
@@ -38,7 +36,7 @@ class _TestTabState extends State<TestTab> {
   @override
   void initState() {
     super.initState();
-    _controller = PageController();
+    _controller = PageController(initialPage: 1); // 👉 hiển thị màn 2
   }
 
   @override
@@ -55,7 +53,10 @@ class _TestTabState extends State<TestTab> {
         scrollDirection: Axis.vertical,
         children: [
           FlashcardScreen(words: widget.words), // Box 1: Flash Card
-          _PracticeBoxes(words: widget.words), // Box 2: 3 Boxes
+          PracticeBoxes(
+            words: widget.words,
+            unlearnedWords: widget.unlearnedWords,
+          ), // Box 2: 3 Boxes
         ],
       ),
     );
@@ -308,9 +309,10 @@ class _BottomBoxes extends StatelessWidget {
   }
 }
 
-class _PracticeBoxes extends StatelessWidget {
+class PracticeBoxes extends StatelessWidget {
   final List<Map<String, dynamic>> words;
-  const _PracticeBoxes({required this.words});
+  final List<Map<String, dynamic>> unlearnedWords;
+  const PracticeBoxes({required this.words, required this.unlearnedWords});
 
   @override
   Widget build(BuildContext context) {
@@ -337,17 +339,122 @@ class _PracticeBoxes extends StatelessWidget {
   Widget _buildBox(BuildContext ctx, String title) {
     return Expanded(
       child: Card(
-        color: Colors.white,
+        color: Colors.green.shade50,
         elevation: 2,
-        child: InkWell(
-          onTap: () {
-            ScaffoldMessenger.of(
-              ctx,
-            ).showSnackBar(SnackBar(content: Text('Bấm vào "$title"')));
-          },
-          child: Center(
-            child: Text(title, style: const TextStyle(fontSize: 18)),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    title, // ✅ dùng title truyền vào thay vì fix cứng 'Từ mới'
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text('${unlearnedWords.length}'),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: unlearnedWords.length,
+                  itemBuilder: (context, index) {
+                    final word = unlearnedWords[index];
+                    return _WordChoiceTile(
+                      word: word,
+                      allWords: unlearnedWords,
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
+        ),
+      ),
+    ); // ✅ phải là dấu chấm phẩy
+  }
+}
+
+class _WordChoiceTile extends StatefulWidget {
+  final Map<String, dynamic> word;
+  final List<Map<String, dynamic>> allWords;
+
+  const _WordChoiceTile({required this.word, required this.allWords});
+
+  @override
+  State<_WordChoiceTile> createState() => _WordChoiceTileState();
+}
+
+class _WordChoiceTileState extends State<_WordChoiceTile> {
+  String? selected;
+  bool? isCorrect;
+  List<String> options = [];
+
+  @override
+  void initState() {
+    super.initState();
+    generateOptions();
+  }
+
+  void generateOptions() {
+    options = [widget.word['meaning']];
+    final otherWords = widget.allWords.where((w) => w != widget.word).toList();
+    otherWords.shuffle();
+    for (var i = 0; i < 5 && i < otherWords.length; i++) {
+      options.add(otherWords[i]['meaning']);
+    }
+    options.shuffle();
+  }
+
+  void onSelect(String? value) {
+    setState(() {
+      selected = value;
+      isCorrect = (value == widget.word['meaning']);
+
+      if (!isCorrect!) {
+        Future.delayed(const Duration(seconds: 1), () {
+          setState(() {
+            selected = null;
+            isCorrect = null;
+          });
+        });
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: isCorrect == true
+          ? Colors.green.shade200
+          : isCorrect == false
+          ? Colors.red.shade200
+          : null,
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(widget.word['word'], style: const TextStyle(fontSize: 20)),
+            if (selected == null)
+              DropdownButton<String>(
+                hint: const Text("Chọn nghĩa"),
+                items: options
+                    .map((m) => DropdownMenuItem(value: m, child: Text(m)))
+                    .toList(),
+                onChanged: onSelect,
+              ),
+            if (selected != null && isCorrect == true)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text('🇻🇳 ${widget.word['meaning']}'),
+              ),
+          ],
         ),
       ),
     );
