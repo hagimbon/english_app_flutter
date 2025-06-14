@@ -4,6 +4,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'add_word_screen.dart';
+import 'dart:math';
+import 'package:flutter/material.dart';
+import 'dart:async';
+import 'dart:typed_data';
 
 List<Map<String, dynamic>> learnedWords = [
   {'word': 'apple', 'meaning': 'quả táo', 'phonetic': '/ˈæp.əl/'},
@@ -52,11 +56,21 @@ class _TestTabState extends State<TestTab> {
         controller: _controller,
         scrollDirection: Axis.vertical,
         children: [
-          FlashcardScreen(words: widget.words), // Box 1: Flash Card
+          // 👉 Nếu không có từ nào thì hiển thị thông báo
+          if (widget.words.isEmpty)
+            const Center(
+              child: Text(
+                'Không có từ để luyện tập',
+                style: TextStyle(fontSize: 18, color: Colors.red),
+              ),
+            )
+          else
+            FlashcardScreen(words: widget.words),
+
           PracticeBoxes(
             words: widget.words,
             unlearnedWords: widget.unlearnedWords,
-          ), // Box 2: 3 Boxes
+          ),
         ],
       ),
     );
@@ -84,6 +98,9 @@ class _FlashcardScreenState extends State<FlashcardScreen> {
   @override
   void initState() {
     super.initState();
+
+    if (widget.words.isEmpty) return; // ✅ bảo vệ nếu rỗng
+
     startTimer();
     prepareOptions();
   }
@@ -325,13 +342,26 @@ class PracticeBoxes extends StatelessWidget {
               children: [
                 _buildBox(context, 'Từ mới'),
                 const SizedBox(width: 8),
-                _buildBox(context, 'Từ chưa học'),
+                _buildBox(context, 'Từ đã học'), // 👈 đổi vị trí vào giữa
                 const SizedBox(width: 8),
-                _buildBox(context, 'Từ đã học'),
+                _buildFlashCardBox(context),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildFlashCardBox(BuildContext ctx) {
+    return Expanded(
+      child: Card(
+        color: Colors.white,
+        elevation: 2,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: FlashCardQuizBox(unlearnedWords: this.unlearnedWords),
+        ),
       ),
     );
   }
@@ -458,5 +488,447 @@ class _WordChoiceTileState extends State<_WordChoiceTile> {
         ),
       ),
     );
+  }
+}
+
+class FlashCardQuizBox extends StatefulWidget {
+  const FlashCardQuizBox({
+    super.key,
+    required this.unlearnedWords,
+  }); // ✅ tên trùng
+  final List<Map<String, dynamic>> unlearnedWords;
+
+  @override
+  State<FlashCardQuizBox> createState() => _FlashCardQuizBoxState();
+}
+
+class FlashcardScreenState extends State<FlashcardScreen> {
+  int currentIndex = 0;
+  Timer? _timer;
+  bool isCorrect = false;
+  bool isWrong = false;
+  bool isTimeOut = false;
+  int timeLeft = 15;
+  late List<String> options;
+  late String correctAnswer;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.words.isNotEmpty) {
+      startTimer();
+      prepareOptions();
+    }
+  }
+
+  void prepareOptions() {
+    final current = widget.words[currentIndex];
+    correctAnswer = current['meaning'];
+    options = List<String>.from(widget.words.map((e) => e['meaning']));
+    while (options.length < 10) {
+      options.add('Nghĩa phụ');
+    }
+    options.shuffle();
+    options = options.take(10).toList();
+  }
+
+  void startTimer() {
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (timeLeft > 0 && !isCorrect) {
+        setState(() {
+          timeLeft--;
+        });
+      } else {
+        timer.cancel();
+        if (!isCorrect) {
+          setState(() {
+            isTimeOut = true;
+          });
+          Future.delayed(const Duration(seconds: 2), nextWord);
+        }
+      }
+    });
+  }
+
+  void nextWord() {
+    if (widget.words.isEmpty) return; // tránh lỗi chia cho 0
+
+    setState(() {
+      currentIndex = (currentIndex + 1) % widget.words.length;
+      isCorrect = false;
+      isWrong = false;
+      isTimeOut = false;
+      timeLeft = 15;
+      prepareOptions();
+      startTimer();
+    });
+  }
+
+  void checkAnswer(String answer) {
+    if (answer == correctAnswer) {
+      setState(() {
+        isCorrect = true;
+        isWrong = false;
+      });
+      Future.delayed(const Duration(seconds: 2), nextWord);
+    } else {
+      setState(() {
+        isWrong = true;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.words.isEmpty) {
+      return const Scaffold(
+        body: Center(
+          child: Text(
+            'Không có từ để hiển thị',
+            style: TextStyle(fontSize: 18, color: Colors.red),
+          ),
+        ),
+      );
+    }
+
+    final word = widget.words[currentIndex];
+
+    return Scaffold(
+      // ✅ Bọc toàn bộ trong Scaffold
+      body: SafeArea(
+        child: SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minHeight: MediaQuery.of(context).size.height,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  const SizedBox(height: 16),
+                  Text(
+                    word['word'],
+                    style: const TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    word['phonetic'] ?? '',
+                    style: const TextStyle(color: Colors.grey),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    '⏳ $timeLeft giây',
+                    style: const TextStyle(fontSize: 18),
+                  ),
+                  const SizedBox(height: 20),
+                  if (isCorrect)
+                    const Text(
+                      '✅ Đúng rồi!',
+                      style: TextStyle(color: Colors.green, fontSize: 20),
+                    )
+                  else if (isTimeOut)
+                    const Icon(
+                      Icons.sentiment_dissatisfied,
+                      color: Colors.red,
+                      size: 40,
+                    )
+                  else if (isWrong)
+                    const Text(
+                      '❌ Sai rồi!',
+                      style: TextStyle(color: Colors.red, fontSize: 20),
+                    ),
+                  const SizedBox(height: 20),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    alignment: WrapAlignment.center,
+                    children: options.map((e) {
+                      return ElevatedButton(
+                        onPressed: isCorrect || isTimeOut
+                            ? null
+                            : () => checkAnswer(e),
+                        child: Text(e),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: nextWord,
+                    child: const Text('Tiếp >'),
+                  ),
+                  const SizedBox(height: 32),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FlashCardQuizBoxState extends State<FlashCardQuizBox> {
+  int currentIndex = 0;
+  String? selected;
+  bool? isCorrect;
+  int wrongCount = 0;
+  bool showHint = false;
+  bool showExamples = false;
+  bool isFinished = false;
+
+  List<Map<String, dynamic>> flashWords = [];
+  List<String> choices = [];
+
+  @override
+  void initState() {
+    super.initState();
+    flashWords = widget.unlearnedWords
+        .where((w) => w['imageBytes'] != null)
+        .toList();
+    flashWords.shuffle();
+    prepareChoices();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (flashWords.isEmpty) {
+      return const Center(child: Text('Không có từ có ảnh để luyện'));
+    }
+
+    final word = flashWords[currentIndex];
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isCorrect == true
+            ? Colors.green.shade100
+            : isCorrect == false
+            ? Colors.red.shade100
+            : Colors.pink.shade100, // Màu nền mặc định
+        borderRadius: BorderRadius.circular(16),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Text(
+                "Flash Card từ mới",
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const Spacer(),
+              Text('${flashWords.length}'),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // ẢNH
+          ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Image.memory(
+              Uint8List.fromList(List<int>.from(word['imageBytes'])),
+              width: 180,
+              height: 180,
+              fit: BoxFit.cover,
+            ),
+          ),
+
+          const SizedBox(height: 16),
+          Text(
+            word['word'],
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: Colors.indigo,
+            ),
+          ),
+          Text(
+            word['phonetic'] ?? '',
+            style: const TextStyle(color: Colors.grey),
+          ),
+
+          const SizedBox(height: 8),
+          DropdownButton<String>(
+            value: selected,
+            hint: const Text('Choose'),
+            items: choices
+                .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                .toList(),
+            onChanged: isCorrect == null
+                ? (value) => selectAnswer(value!)
+                : null,
+          ),
+
+          const SizedBox(height: 12),
+
+          // Nút xem ví dụ hoặc 2 nút gợi ý + bỏ qua
+          if (!showHint)
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  showExamples = !showExamples;
+                });
+              },
+              child: const Text('Xem ví dụ'),
+              style: TextButton.styleFrom(
+                backgroundColor: Colors.grey.shade400,
+                foregroundColor: Colors.white,
+              ),
+            )
+          else
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      selected = word['meaning'];
+                      isCorrect = true;
+                    });
+                  },
+                  child: const Text('Gợi ý'),
+                  style: TextButton.styleFrom(
+                    backgroundColor: const Color(0xFF87b470),
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                TextButton(
+                  onPressed: nextCard,
+                  child: const Text('Bỏ qua'),
+                  style: TextButton.styleFrom(
+                    backgroundColor: const Color(0xFFbdbdbd),
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+
+          // Ví dụ
+          if (showExamples && word['examples'] != null)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: List.generate(word['examples'].length, (i) {
+                final e = word['examples'][i];
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '🇬🇧 ${e['en'] ?? ''}',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    Text('🇻🇳 ${e['vi'] ?? ''}'),
+                    const SizedBox(height: 8),
+                  ],
+                );
+              }),
+            ),
+
+          const SizedBox(height: 16),
+
+          // Mũi tên điều hướng
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              if (currentIndex > 0)
+                IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: () {
+                    setState(() {
+                      currentIndex--;
+                      selected = null;
+                      isCorrect = null;
+                      wrongCount = 0;
+                      showHint = false;
+                      showExamples = false;
+                      prepareChoices();
+                    });
+                  },
+                ),
+              if (currentIndex < flashWords.length - 1)
+                IconButton(
+                  icon: const Icon(Icons.arrow_forward),
+                  onPressed: nextCard,
+                ),
+            ],
+          ),
+
+          // Nếu làm hết
+          if (isFinished)
+            Column(
+              children: [
+                const Text(
+                  'Bạn cần luyện tập thêm!',
+                  style: TextStyle(color: Colors.red),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      currentIndex = 0;
+                      selected = null;
+                      isCorrect = null;
+                      wrongCount = 0;
+                      showHint = false;
+                      isFinished = false;
+                      flashWords.shuffle();
+                      prepareChoices();
+                    });
+                  },
+                  child: const Text('Luyện lại'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.redAccent,
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  void prepareChoices() {
+    final current = flashWords[currentIndex];
+    final correct = current['meaning'];
+    final allWrong =
+        widget.unlearnedWords
+            .map((e) => e['meaning'])
+            .where((m) => m != correct)
+            .toList()
+          ..shuffle();
+    choices = [correct, ...allWrong.take(7)];
+    choices.shuffle();
+  }
+
+  void selectAnswer(String value) {
+    setState(() {
+      selected = value;
+      isCorrect = value == flashWords[currentIndex]['meaning'];
+      if (!isCorrect!) {
+        wrongCount++;
+        if (wrongCount >= 3) showHint = true;
+      } else {
+        Future.delayed(const Duration(seconds: 1), nextCard);
+      }
+    });
+  }
+
+  void nextCard() {
+    if (currentIndex < flashWords.length - 1) {
+      setState(() {
+        currentIndex++;
+        selected = null;
+        isCorrect = null;
+        wrongCount = 0;
+        showHint = false;
+        showExamples = false;
+        prepareChoices();
+      });
+    } else {
+      setState(() {
+        isFinished = true;
+      });
+    }
   }
 }

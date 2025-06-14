@@ -113,6 +113,11 @@ class _AddWordScreenState extends State<AddWordScreen> {
       final rawBytes = widget.initialData!['imageBytes'];
       if (rawBytes != null && rawBytes is List) {
         imageBytes = Uint8List.fromList(List<int>.from(rawBytes));
+        // ✅ Gán lại ví dụ cũ vào các TextEditingController
+        for (var ex in examples) {
+          exampleEnControllers.add(TextEditingController(text: ex['en']));
+          exampleViControllers.add(TextEditingController(text: ex['vi']));
+        }
       }
     }
   }
@@ -166,11 +171,6 @@ class _AddWordScreenState extends State<AddWordScreen> {
                 decoration: const InputDecoration(labelText: 'Cách dùng'),
               ),
               const SizedBox(height: 20),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                onPressed: saveWord,
-                child: Text(isEditMode ? 'Lưu' : 'Thêm'),
-              ),
               const SizedBox(height: 16),
               const Text(
                 'Ví dụ:',
@@ -197,9 +197,14 @@ class _AddWordScreenState extends State<AddWordScreen> {
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              _previewImageBytes != null
-                  ? Image.memory(_previewImageBytes!, width: 100, height: 100)
+              (_previewImageBytes ?? imageBytes) != null
+                  ? Image.memory(
+                      _previewImageBytes ?? imageBytes!,
+                      width: 100,
+                      height: 100,
+                    )
                   : const Text('Chưa có ảnh'),
+
               TextButton.icon(
                 icon: const Icon(Icons.image),
                 label: const Text('Chọn ảnh'),
@@ -209,6 +214,18 @@ class _AddWordScreenState extends State<AddWordScreen> {
                 onPressed: _addExampleGroup,
                 icon: const Icon(Icons.add),
                 label: const Text('Thêm ví dụ'),
+              ),
+
+              const SizedBox(height: 24), // khoảng cách trước nút
+              Center(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                  onPressed: saveWord,
+                  child: Text(isEditMode ? 'Lưu' : 'Thêm'),
+                ),
               ),
             ],
           ),
