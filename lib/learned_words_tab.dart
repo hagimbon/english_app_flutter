@@ -34,6 +34,7 @@ class LearnedWordsTab extends StatelessWidget {
                       builder: (_) => AddWordScreen(
                         existingWords: words,
                         initialData: word,
+                        isOnline: true, // ✅ hoặc false nếu bố dùng offline
                       ),
                     ),
                   );

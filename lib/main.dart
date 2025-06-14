@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'add_word_screen.dart';
 import 'firebase_options.dart';
 import 'test_tab.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 // ✅ Thêm dòng này:
 
@@ -70,12 +71,51 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
   int _currentIndex = 2; // 👉 Tab "Test"
   List<Map<String, dynamic>> unlearnedWords = [];
   List<Map<String, dynamic>> learnedOnly = [];
-  bool isLoading = true;
+  List<Map<String, dynamic>> pendingQueue = []; // ✅ Hàng đợi chờ sync
+  bool isOnline = true; // ✅ Trạng thái mạng
+  bool isLoading = true; // ✅ để hiện vòng tròn khi đang tải dữ liệu
 
   @override
   void initState() {
     super.initState();
-    loadWords();
+    loadWords(); // tải từ Firestore lúc mở app
+    _checkConnectivity(); // kiểm tra trạng thái mạng ban đầu
+
+    Connectivity().onConnectivityChanged.listen((result) async {
+      final nowOnline = result != ConnectivityResult.none;
+
+      if (!isOnline && nowOnline && pendingQueue.isNotEmpty) {
+        // 🔁 Đang offline mà giờ có mạng + có từ chờ → tiến hành đồng bộ
+        for (var word in pendingQueue) {
+          await FirebaseFirestore.instance.collection('words').add(word);
+        }
+
+        setState(() {
+          pendingQueue.clear(); // 🧹 xoá queue sau khi sync xong
+          isOnline = true;
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('✅ Đã đồng bộ các từ khi có mạng')),
+          );
+        }
+
+        await loadWords(); // Tải lại dữ liệu mới sau khi đồng bộ
+      } else {
+        // Nếu không có gì đặc biệt → chỉ cập nhật trạng thái mạng
+        setState(() {
+          isOnline = nowOnline;
+        });
+      }
+    });
+  }
+
+  Future<void> _checkConnectivity() async {
+    final result = await Connectivity().checkConnectivity();
+    setState(() {
+      isOnline = result != ConnectivityResult.none;
+    });
   }
 
   Future<void> loadWords() async {
@@ -90,25 +130,49 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
   }
 
   void _openAddWordScreen() async {
-    await Navigator.push(
+    final result = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => AddWordScreen(
           existingWords: [...unlearnedWords, ...learnedOnly],
           initialData: null,
+          isOnline: isOnline,
         ),
       ),
     );
-    await loadWords(); // Sau khi thêm từ thì tải lại dữ liệu
+
+    if (result != null && result is Map) {
+      if (result['success'] == true) {
+        if (result['offline'] == true) {
+          // ✅ Lưu vào pendingQueue
+          setState(() {
+            pendingQueue.add(result['word']);
+            unlearnedWords.add(result['word']); // vẫn hiển thị trên app
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('🔃 Đã lưu offline, sẽ đồng bộ khi có mạng'),
+            ),
+          );
+        } else {
+          await loadWords(); // online thì load từ Firebase lại
+        }
+      }
+    }
   }
 
   List<Widget> get _tabs => [
-    WordListTab(words: unlearnedWords, title: 'Từ chưa học'),
-    WordListTab(words: learnedOnly, title: 'Từ đã học'),
-    TestTab(
+    WordListTab(
+      words: unlearnedWords,
+      title: 'Từ chưa học',
+      isOnline: isOnline, // ✅ thêm dòng này
+    ),
+    WordListTab(
       words: learnedOnly,
-      unlearnedWords: unlearnedWords,
-    ), // ✅ thêm dòng này
+      title: 'Từ đã học',
+      isOnline: isOnline, // ✅ thêm dòng này
+    ),
+    TestTab(words: learnedOnly, unlearnedWords: unlearnedWords),
   ];
 
   @override
@@ -118,7 +182,25 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
     }
 
     return Scaffold(
-      body: _tabs[_currentIndex],
+      body: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            color: isOnline ? Colors.green : Colors.red,
+            padding: const EdgeInsets.all(8),
+            child: Center(
+              child: Text(
+                isOnline
+                    ? '🔵 Đang kết nối mạng'
+                    : '🔴 Không có kết nối mạng – dùng offline',
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          ),
+          Expanded(child: _tabs[_currentIndex]), // Giữ nguyên tab
+        ],
+      ),
+
       floatingActionButton: FloatingActionButton(
         onPressed: _openAddWordScreen,
         child: const Icon(Icons.add),
@@ -140,8 +222,14 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
 class WordListTab extends StatefulWidget {
   final List<Map<String, dynamic>> words;
   final String title;
+  final bool isOnline; // ✅ thêm dòng này
 
-  const WordListTab({super.key, required this.words, required this.title});
+  const WordListTab({
+    super.key,
+    required this.words,
+    required this.title,
+    required this.isOnline, // ✅ thêm dòng này
+  });
 
   @override
   State<WordListTab> createState() => _WordListTabState();
@@ -265,6 +353,8 @@ class _WordListTabState extends State<WordListTab> {
                                         existingWords: widget.words,
                                         initialData: word,
                                         wordId: word['id'],
+                                        isOnline: widget
+                                            .isOnline, // ✅ sửa lại như thế này
                                       ),
                                     ),
                                   );
