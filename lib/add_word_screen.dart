@@ -7,15 +7,16 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class AddWordScreen extends StatefulWidget {
   final List<Map<String, dynamic>> existingWords;
   final Map<String, dynamic>? initialData;
-
-  final String? wordId; // ✅ THÊM DÒNG NÀY
+  final String? wordId;
+  final bool isOnline; // ✅ thêm dòng này
 
   const AddWordScreen({
-    super.key,
+    Key? key,
     required this.existingWords,
     this.initialData,
-    this.wordId, // ✅ THÊM DÒNG NÀY
-  });
+    this.wordId,
+    required this.isOnline, // ✅ thêm dòng này
+  }) : super(key: key);
 
   @override
   State<AddWordScreen> createState() => _AddWordScreenState();
@@ -26,6 +27,13 @@ class _AddWordScreenState extends State<AddWordScreen> {
   final _meaningController = TextEditingController();
   final _phoneticController = TextEditingController();
   final _usageController = TextEditingController();
+
+  late TextEditingController wordController;
+  late TextEditingController meaningController;
+  late TextEditingController phoneticController;
+  late TextEditingController usageController;
+
+  bool isLearned = false; // ⬅️ Dùng để kiểm tra trạng thái đã học hay chưa
 
   List<TextEditingController> exampleEnControllers = [];
   List<TextEditingController> exampleViControllers = [];
@@ -40,36 +48,47 @@ class _AddWordScreenState extends State<AddWordScreen> {
 
   Future<void> saveWord() async {
     final wordData = {
-      'word': _englishController.text.trim(),
-      'meaning': _meaningController.text.trim(),
-      'phonetic': _phoneticController.text.trim(),
-      'usage': _usageController.text.trim(),
-      'examples': List<Map<String, String>>.generate(
-        exampleEnControllers.length,
-        (i) => {
-          'en': exampleEnControllers[i].text.trim(),
-          'vi': exampleViControllers[i].text.trim(),
-        },
-      ),
-      'imageBytes': _previewImageBytes ?? imageBytes,
-      'isLearned':
-          widget.initialData != null &&
-          widget.initialData!['isLearned'] == true,
+      'word': wordController.text.trim(),
+      'meaning': meaningController.text.trim(),
+      'phonetic': phoneticController.text.trim(),
+      'usage': usageController.text.trim(),
+      'examples': examples,
+      'imageBytes': imageBytes,
+      'isLearned': isLearned,
     };
-
-    if (isEditMode) {
-      final docId = widget.wordId ?? widget.initialData?['id'];
-      await FirebaseFirestore.instance
-          .collection('words')
-          .doc(docId)
-          .update(wordData);
+    if (widget.isOnline) {
+      try {
+        if (widget.wordId != null) {
+          await FirebaseFirestore.instance
+              .collection('words')
+              .doc(widget.wordId)
+              .update(wordData);
+        } else {
+          await FirebaseFirestore.instance.collection('words').add(wordData);
+        }
+        if (mounted) {
+          Navigator.pop(context, {'success': true});
+        }
+      } catch (e) {
+        debugPrint('❌ Lỗi khi lưu Firebase: $e');
+        if (mounted) {
+          Navigator.pop(context, {
+            'success': true,
+            'offline': true,
+            'word': wordData,
+          });
+        }
+      }
     } else {
-      await FirebaseFirestore.instance
-          .collection('words') // ✅ dùng chung 1 collection
-          .add(wordData);
+      // ❗ Lưu vào queue nếu offline
+      if (mounted) {
+        Navigator.pop(context, {
+          'success': true,
+          'offline': true,
+          'word': wordData,
+        });
+      }
     }
-
-    Navigator.pop(context, true); // gửi true để biết có thay đổi
   }
 
   Future<void> _pickImage() async {
@@ -99,32 +118,21 @@ class _AddWordScreenState extends State<AddWordScreen> {
   @override
   void initState() {
     super.initState();
-    if (widget.initialData != null) {
-      _englishController.text = widget.initialData!['word'] ?? '';
-      _meaningController.text = widget.initialData!['meaning'] ?? '';
-      _phoneticController.text = widget.initialData!['phonetic'] ?? '';
-      _usageController.text = widget.initialData!['usage'] ?? '';
 
-      examples =
-          (widget.initialData!['examples'] as List<dynamic>?)
-              ?.map(
-                (e) => {
-                  'en': e['en']?.toString() ?? '',
-                  'vi': e['vi']?.toString() ?? '',
-                },
-              )
-              .toList() ??
-          [];
-      final rawBytes = widget.initialData!['imageBytes'];
-      if (rawBytes != null && rawBytes is List) {
-        imageBytes = Uint8List.fromList(List<int>.from(rawBytes));
-        // ✅ Gán lại ví dụ cũ vào các TextEditingController
-        for (var ex in examples) {
-          exampleEnControllers.add(TextEditingController(text: ex['en']));
-          exampleViControllers.add(TextEditingController(text: ex['vi']));
-        }
-      }
-    }
+    wordController = TextEditingController(
+      text: widget.initialData?['word'] ?? '',
+    );
+    meaningController = TextEditingController(
+      text: widget.initialData?['meaning'] ?? '',
+    );
+    phoneticController = TextEditingController(
+      text: widget.initialData?['phonetic'] ?? '',
+    );
+    usageController = TextEditingController(
+      text: widget.initialData?['usage'] ?? '',
+    );
+
+    isLearned = widget.initialData?['isLearned'] ?? false;
   }
 
   void _addExampleGroup() {
@@ -136,16 +144,18 @@ class _AddWordScreenState extends State<AddWordScreen> {
 
   @override
   void dispose() {
-    _englishController.dispose();
-    _meaningController.dispose();
-    _phoneticController.dispose();
-    _usageController.dispose();
+    wordController.dispose();
+    meaningController.dispose();
+    phoneticController.dispose();
+    usageController.dispose();
+
     for (final c in exampleEnControllers) {
       c.dispose();
     }
     for (final c in exampleViControllers) {
       c.dispose();
     }
+
     super.dispose();
   }
 
