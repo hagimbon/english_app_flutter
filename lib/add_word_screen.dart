@@ -100,10 +100,20 @@ class _AddWordScreenState extends State<AddWordScreen> {
       _phoneticController.text = widget.initialData!['phonetic'] ?? '';
       _usageController.text = widget.initialData!['usage'] ?? '';
 
-      examples = List<Map<String, String>>.from(
-        widget.initialData!['examples'] ?? [],
-      );
-      imageBytes = widget.initialData!['imageBytes'];
+      examples =
+          (widget.initialData!['examples'] as List<dynamic>?)
+              ?.map(
+                (e) => {
+                  'en': e['en']?.toString() ?? '',
+                  'vi': e['vi']?.toString() ?? '',
+                },
+              )
+              .toList() ??
+          [];
+      final rawBytes = widget.initialData!['imageBytes'];
+      if (rawBytes != null && rawBytes is List) {
+        imageBytes = Uint8List.fromList(List<int>.from(rawBytes));
+      }
     }
   }
 
