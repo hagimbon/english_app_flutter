@@ -119,16 +119,22 @@ class _FlashcardScreenState extends State<FlashcardScreen> {
   void startTimer() {
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (timeLeft > 0 && !isCorrect) {
-        setState(() {
-          timeLeft--;
-        });
+        if (mounted) {
+          setState(() {
+            timeLeft--;
+          });
+        }
       } else {
         timer.cancel();
         if (!isCorrect) {
-          setState(() {
-            isTimeOut = true;
+          if (mounted) {
+            setState(() {
+              isTimeOut = true;
+            });
+          }
+          Future.delayed(const Duration(seconds: 2), () {
+            if (mounted) nextWord();
           });
-          Future.delayed(const Duration(seconds: 2), nextWord);
         }
       }
     });
@@ -221,6 +227,12 @@ class _FlashcardScreenState extends State<FlashcardScreen> {
         ],
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel(); // ✅ Hủy Timer khi rời khỏi màn hình
+    super.dispose();
   }
 }
 

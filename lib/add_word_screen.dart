@@ -6,13 +6,15 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class AddWordScreen extends StatefulWidget {
   final List<Map<String, dynamic>> existingWords;
-  final Map<String, dynamic>?
-  initialData; // 👉 dùng tên này luôn cho thống nhất
+  final Map<String, dynamic>? initialData;
+
+  final String? wordId; // ✅ THÊM DÒNG NÀY
 
   const AddWordScreen({
     super.key,
     required this.existingWords,
     this.initialData,
+    this.wordId, // ✅ THÊM DÒNG NÀY
   });
 
   @override
@@ -49,22 +51,25 @@ class _AddWordScreenState extends State<AddWordScreen> {
           'vi': exampleViControllers[i].text.trim(),
         },
       ),
-      'imageBytes': _previewImageBytes,
+      'imageBytes': _previewImageBytes ?? imageBytes,
       'isLearned':
           widget.initialData != null &&
           widget.initialData!['isLearned'] == true,
     };
 
-    if (widget.initialData != null && widget.initialData!['id'] != null) {
+    if (isEditMode) {
+      final docId = widget.wordId ?? widget.initialData?['id'];
       await FirebaseFirestore.instance
           .collection('words')
-          .doc(widget.initialData!['id'])
-          .set(wordData);
+          .doc(docId)
+          .update(wordData);
     } else {
-      await FirebaseFirestore.instance.collection('words').add(wordData);
+      await FirebaseFirestore.instance
+          .collection('words') // ✅ dùng chung 1 collection
+          .add(wordData);
     }
 
-    Navigator.pop(context);
+    Navigator.pop(context, true); // gửi true để biết có thay đổi
   }
 
   Future<void> _pickImage() async {
