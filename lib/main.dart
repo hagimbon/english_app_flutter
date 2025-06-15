@@ -9,8 +9,11 @@ import 'add_word_screen.dart';
 import 'firebase_options.dart';
 import 'test_tab.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:hive_flutter/hive_flutter.dart'; // đã có rồi
-import 'word_model.dart'; // 👈 Bổ sung dòng này
+import 'package:hive_flutter/hive_flutter.dart';
+import 'word_model.dart'; //
+import 'hive_service.dart';
+import 'package:flutter/foundation.dart'; // cho listEquals
+import 'package:collection/collection.dart'; // cho DeepCollectionEquality
 
 Future<List<Map<String, dynamic>>> fetchWords({bool isLearned = false}) async {
   final snapshot = await FirebaseFirestore.instance
@@ -80,6 +83,12 @@ List<Map<String, dynamic>> learnedWords = [
   {'word': 'book', 'meaning': 'quyển sách', 'phonetic': '/bʊk/'},
   {'word': 'car', 'meaning': 'xe hơi', 'phonetic': '/kɑːr/'},
 ];
+
+ValueNotifier<List<Map<String, dynamic>>> unlearnedWordsNotifier =
+    ValueNotifier([]);
+ValueNotifier<List<Map<String, dynamic>>> learnedWordsNotifier = ValueNotifier(
+  [],
+);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized(); // Bắt buộc
@@ -200,28 +209,36 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
       final learned = results[1];
 
       final box = Hive.box<WordModel>('wordsBox');
-      await box.clear(); // xoá cache cũ
 
-      final Map<String, WordModel> newWordsMap = {
-        for (var word in [...unlearned, ...learned])
-          word['id']: WordModel(
-            id: word['id'],
-            word: word['word'],
-            meaning: word['meaning'],
-            phonetic: word['phonetic'],
-            usage: word['usage'],
-            examples: List<Map<String, String>>.from(word['examples'] ?? []),
-            imageBytes: word['imageBytes']?.cast<int>(),
-            isLearned: word['isLearned'] ?? false,
-          ),
+      // 🔍 Lấy tất cả dữ liệu hiện tại trong Hive
+      final Map<String, WordModel> currentHiveWords = {
+        for (var w in box.values) w.id: w,
       };
 
-      await box.putAll(newWordsMap);
+      // 🔄 Duyệt toàn bộ từ mới từ Firebase
+      for (var word in [...unlearned, ...learned]) {
+        final id = word['id'];
+        final newWordModel = WordModel.fromMap(word);
+        final oldWordModel = currentHiveWords[id];
+
+        // So sánh: nếu chưa có hoặc dữ liệu khác thì mới ghi lại
+        if (oldWordModel == null || !_isSameWord(oldWordModel, newWordModel)) {
+          await box.put(id, newWordModel);
+        }
+
+        // Bỏ id đó ra khỏi danh sách để còn lại là những cái cần xóa
+        currentHiveWords.remove(id);
+      }
+
+      // 🗑 Những từ còn lại trong Hive mà không có trong Firebase → xoá đi
+      for (final id in currentHiveWords.keys) {
+        await box.delete(id);
+      }
 
       // ⬇️ Cập nhật danh sách sau khi đồng bộ
       setState(() {
-        unlearnedWords = unlearned;
-        learnedOnly = learned;
+        unlearnedWordsNotifier.value = unlearned;
+        learnedWordsNotifier.value = learned;
       });
     }
 
@@ -252,9 +269,10 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
           'offline_${DateTime.now().millisecondsSinceEpoch}';
       final wordWithId = {'id': id, ...newWord};
 
-      setState(() {
-        unlearnedWords.add(wordWithId);
-      });
+      unlearnedWordsNotifier.value = [
+        ...unlearnedWordsNotifier.value,
+        wordWithId,
+      ];
 
       // Nếu offline thì cho vào hàng đợi
       if (result['offline'] == true) {
@@ -265,27 +283,27 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
 
   List<Widget> get _tabs => [
     WordListTab(
-      words: unlearnedWords,
+      wordsNotifier: unlearnedWordsNotifier,
       title: 'Từ chưa học',
-      isOnline: isOnline, // ✅ thêm dòng này
+      isOnline: isOnline,
     ),
     WordListTab(
-      words: learnedOnly,
+      wordsNotifier: learnedWordsNotifier,
       title: 'Từ đã học',
-      isOnline: isOnline, // ✅ thêm dòng này
+      isOnline: isOnline,
     ),
-    TestTab(words: learnedOnly, unlearnedWords: unlearnedWords),
+    TestTab(
+      wordsNotifier: learnedWordsNotifier,
+      unlearnedNotifier: unlearnedWordsNotifier,
+    ),
   ];
 
   @override
   Widget build(BuildContext context) {
-    if (isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-
     return Scaffold(
       body: Column(
         children: [
+          // Hiển thị trạng thái mạng
           Container(
             width: double.infinity,
             color: isOnline ? Colors.green : Colors.red,
@@ -299,15 +317,24 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
               ),
             ),
           ),
-          Expanded(child: _tabs[_currentIndex]), // Giữ nguyên tab
+
+          // Hiển thị nội dung hoặc loading
+          Expanded(
+            child: isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _tabs[_currentIndex],
+          ),
         ],
       ),
 
+      // Nút thêm từ mới
       floatingActionButton: FloatingActionButton(
         onPressed: _openAddWordScreen,
         child: const Icon(Icons.add),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+
+      // Menu dưới cùng
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) => setState(() => _currentIndex = index),
@@ -322,15 +349,15 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
 }
 
 class WordListTab extends StatefulWidget {
-  final List<Map<String, dynamic>> words;
+  final ValueNotifier<List<Map<String, dynamic>>> wordsNotifier;
   final String title;
   final bool isOnline; // ✅ thêm dòng này
 
   const WordListTab({
     super.key,
-    required this.words,
+    required this.wordsNotifier,
     required this.title,
-    required this.isOnline, // ✅ thêm dòng này
+    required this.isOnline,
   });
 
   @override
@@ -364,7 +391,7 @@ class _WordListTabState extends State<WordListTab> {
   }
 
   void trainSelected() {
-    final selectedWords = widget.words
+    final selectedWords = widget.wordsNotifier.value
         .where((w) => selectedIds.contains(w['id']))
         .toList();
 
@@ -372,8 +399,10 @@ class _WordListTabState extends State<WordListTab> {
       context,
       MaterialPageRoute(
         builder: (context) => TestTab(
-          words: selectedWords,
-          unlearnedWords: [], // 👈 tạm thời truyền danh sách rỗng nếu không cần
+          wordsNotifier: ValueNotifier(selectedWords),
+          unlearnedNotifier: ValueNotifier(
+            [],
+          ), // hoặc truyền danh sách cần thiết
         ),
       ),
     );
@@ -383,7 +412,7 @@ class _WordListTabState extends State<WordListTab> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('${widget.title} (${widget.words.length})'),
+        title: Text('${widget.title} (${widget.wordsNotifier.value.length})'),
         actions: [
           if (selectedIds.isNotEmpty)
             Row(
@@ -406,258 +435,289 @@ class _WordListTabState extends State<WordListTab> {
             ),
         ],
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView.builder(
-              itemCount: widget.words.length,
-              itemBuilder: (context, index) {
-                final word = widget.words[index];
-                final id = word['id'] ?? index.toString();
-                final isSelected = selectedIds.contains(id);
+      body: ValueListenableBuilder<List<Map<String, dynamic>>>(
+        valueListenable: widget.wordsNotifier,
+        builder: (context, words, _) {
+          return Column(
+            children: [
+              Expanded(
+                child: ListView.builder(
+                  itemCount: words.length,
+                  itemBuilder: (context, index) {
+                    final word = words[index];
+                    final id = word['id'] ?? index.toString();
+                    final isSelected = selectedIds.contains(id);
 
-                return GestureDetector(
-                  onTap: () => toggleSelect(id),
-                  child: Card(
-                    color: isSelected ? Colors.blue.shade50 : null,
-                    margin: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
+                    return GestureDetector(
+                      onTap: () => toggleSelect(id),
+                      child: Card(
+                        color: isSelected ? Colors.blue.shade50 : null,
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              IconButton(
-                                icon: const Icon(Icons.volume_up),
-                                onPressed: null, // Tạm thời chưa dùng
-                              ),
-
-                              Expanded(
-                                child: Text(
-                                  word['word'] ?? '',
-                                  style: const TextStyle(
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-
-                              // 👇 Hai nút nằm cạnh nhau
                               Row(
-                                mainAxisSize: MainAxisSize.min,
                                 children: [
                                   IconButton(
-                                    icon: const Icon(
-                                      Icons.edit,
-                                      color: Colors.blue,
-                                    ),
-                                    tooltip: 'Sửa từ',
-                                    onPressed: () async {
-                                      final result = await Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (context) => AddWordScreen(
-                                            existingWords: widget.words,
-                                            initialData: word,
-                                            wordId: word['id'],
-                                            isOnline: widget.isOnline,
-                                          ),
-                                        ),
-                                      );
-
-                                      if (result != null &&
-                                          result['success'] == true) {
-                                        final updated =
-                                            result['updatedWord']
-                                                as Map<String, dynamic>;
-                                        final id = result['wordId'];
-
-                                        setState(() {
-                                          final index = widget.words.indexWhere(
-                                            (w) => w['id'] == id,
-                                          );
-                                          if (index != -1) {
-                                            widget.words[index] = {
-                                              'id': id,
-                                              ...updated,
-                                            };
-                                          }
-                                        });
-                                      }
-                                    },
+                                    icon: const Icon(Icons.volume_up),
+                                    onPressed: null, // Chưa dùng
                                   ),
-                                  IconButton(
-                                    icon: const Icon(
-                                      Icons.delete,
-                                      color: Colors.red,
+                                  Expanded(
+                                    child: Text(
+                                      word['word'] ?? '',
+                                      style: const TextStyle(
+                                        fontSize: 24,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
-                                    tooltip: 'Xoá từ',
-                                    onPressed: () async {
-                                      final id = word['id'];
-                                      final confirm = await showDialog<bool>(
+                                  ),
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(
+                                          Icons.edit,
+                                          color: Colors.blue,
+                                        ),
+                                        onPressed: () async {
+                                          final result = await Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (context) =>
+                                                  AddWordScreen(
+                                                    existingWords: widget
+                                                        .wordsNotifier
+                                                        .value,
+                                                    initialData: word,
+                                                    wordId: word['id'],
+                                                    isOnline: widget.isOnline,
+                                                  ),
+                                            ),
+                                          );
+
+                                          if (result != null &&
+                                              result['success'] == true) {
+                                            final updated =
+                                                result['updatedWord']
+                                                    as Map<String, dynamic>;
+                                            final id = result['wordId'];
+
+                                            final index = widget
+                                                .wordsNotifier
+                                                .value
+                                                .indexWhere(
+                                                  (w) => w['id'] == id,
+                                                );
+                                            if (index != -1) {
+                                              widget
+                                                  .wordsNotifier
+                                                  .value[index] = {
+                                                'id': id,
+                                                ...updated,
+                                              };
+                                              widget.wordsNotifier
+                                                  .notifyListeners();
+                                            }
+                                          }
+                                        },
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(
+                                          Icons.delete,
+                                          color: Colors.red,
+                                        ),
+                                        onPressed: () async {
+                                          final id = word['id'];
+                                          final confirm = await showDialog<bool>(
+                                            context: context,
+                                            builder: (context) => AlertDialog(
+                                              title: const Text('Xoá từ này?'),
+                                              content: const Text(
+                                                'Bạn có chắc muốn xoá từ này không?',
+                                              ),
+                                              actions: [
+                                                TextButton(
+                                                  onPressed: () =>
+                                                      Navigator.pop(
+                                                        context,
+                                                        false,
+                                                      ),
+                                                  child: const Text('Huỷ'),
+                                                ),
+                                                TextButton(
+                                                  onPressed: () =>
+                                                      Navigator.pop(
+                                                        context,
+                                                        true,
+                                                      ),
+                                                  child: const Text('Xoá'),
+                                                ),
+                                              ],
+                                            ),
+                                          );
+
+                                          if (confirm == true) {
+                                            final updatedList = widget
+                                                .wordsNotifier
+                                                .value
+                                                .where((w) => w['id'] != id)
+                                                .toList();
+                                            widget.wordsNotifier.value =
+                                                updatedList;
+
+                                            if (widget.isOnline &&
+                                                id != null &&
+                                                !id.toString().startsWith(
+                                                  'offline_',
+                                                )) {
+                                              await FirebaseFirestore.instance
+                                                  .collection('words')
+                                                  .doc(id)
+                                                  .delete();
+                                            }
+                                          }
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              if (word['phonetic'] != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 16),
+                                  child: Text(
+                                    '/${word['phonetic']}/',
+                                    style: const TextStyle(color: Colors.grey),
+                                  ),
+                                ),
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                  left: 16,
+                                  top: 4,
+                                ),
+                                child: Text(
+                                  word['meaning'] ?? '',
+                                  style: const TextStyle(fontSize: 16),
+                                ),
+                              ),
+                              OverflowBar(
+                                alignment: MainAxisAlignment.start,
+                                children: [
+                                  TextButton(
+                                    onPressed: () {
+                                      showDialog(
                                         context: context,
-                                        builder: (context) => AlertDialog(
-                                          title: const Text('Xoá từ này?'),
-                                          content: const Text(
-                                            'Bạn có chắc muốn xoá từ này không?',
+                                        builder: (_) => AlertDialog(
+                                          title: const Text('Cách dùng'),
+                                          content: Text(
+                                            word['usage'] ?? 'Không có dữ liệu',
                                           ),
                                           actions: [
                                             TextButton(
                                               onPressed: () =>
-                                                  Navigator.pop(context, false),
-                                              child: const Text('Huỷ'),
-                                            ),
-                                            TextButton(
-                                              onPressed: () =>
-                                                  Navigator.pop(context, true),
-                                              child: const Text('Xoá'),
+                                                  Navigator.pop(context),
+                                              child: const Text('Đóng'),
                                             ),
                                           ],
                                         ),
                                       );
-
-                                      if (confirm == true) {
-                                        setState(() {
-                                          widget.words.removeWhere(
-                                            (w) => w['id'] == id,
-                                          );
-                                        });
-
-                                        if (widget.isOnline &&
-                                            id != null &&
-                                            !id.toString().startsWith(
-                                              'offline_',
-                                            )) {
-                                          await FirebaseFirestore.instance
-                                              .collection('words')
-                                              .doc(id)
-                                              .delete();
-                                        }
-                                      }
                                     },
+                                    child: const Text('Cách dùng'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () {
+                                      showDialog(
+                                        context: context,
+                                        builder: (_) => AlertDialog(
+                                          title: const Text('Ví dụ'),
+                                          content: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: (word['examples'] ?? [])
+                                                .map<Widget>((e) {
+                                                  return Padding(
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                          vertical: 4,
+                                                        ),
+                                                    child: Column(
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .start,
+                                                      children: [
+                                                        Text(
+                                                          '🇬🇧 ${e['en'] ?? ''}',
+                                                          style:
+                                                              const TextStyle(
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .bold,
+                                                              ),
+                                                        ),
+                                                        Text(
+                                                          '🇻🇳 ${e['vi'] ?? ''}',
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  );
+                                                })
+                                                .toList(),
+                                          ),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () =>
+                                                  Navigator.pop(context),
+                                              child: const Text('Đóng'),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                    child: const Text('Ví dụ'),
                                   ),
                                 ],
                               ),
                             ],
                           ),
-
-                          if (word['phonetic'] != null)
-                            Padding(
-                              padding: const EdgeInsets.only(left: 16),
-                              child: Text(
-                                '/${word['phonetic']}/',
-                                style: const TextStyle(color: Colors.grey),
-                              ),
-                            ),
-                          Padding(
-                            padding: const EdgeInsets.only(left: 16, top: 4),
-                            child: Text(
-                              word['meaning'] ?? '',
-                              style: const TextStyle(fontSize: 16),
-                            ),
-                          ),
-                          OverflowBar(
-                            alignment: MainAxisAlignment.start,
-                            children: [
-                              TextButton(
-                                onPressed: () {
-                                  showDialog(
-                                    context: context,
-                                    builder: (_) => AlertDialog(
-                                      title: const Text('Cách dùng'),
-                                      content: Text(
-                                        word['usage'] ?? 'Không có dữ liệu',
-                                      ),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () =>
-                                              Navigator.pop(context),
-                                          child: const Text('Đóng'),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                                child: const Text('Cách dùng'),
-                              ),
-                              TextButton(
-                                onPressed: () {
-                                  showDialog(
-                                    context: context,
-                                    builder: (_) => AlertDialog(
-                                      title: const Text('Ví dụ'),
-                                      content: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: (word['examples'] ?? [])
-                                            .map<Widget>((e) {
-                                              return Padding(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      vertical: 4,
-                                                    ),
-                                                child: Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    Text(
-                                                      '🇬🇧 ${e['en'] ?? ''}',
-                                                      style: const TextStyle(
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                      ),
-                                                    ),
-                                                    Text(
-                                                      '🇻🇳 ${e['vi'] ?? ''}',
-                                                    ),
-                                                  ],
-                                                ),
-                                              );
-                                            })
-                                            .toList(),
-                                      ),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () =>
-                                              Navigator.pop(context),
-                                          child: const Text('Đóng'),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                                child: const Text('Ví dụ'),
-                              ),
-                            ],
-                          ),
-                        ],
+                        ),
                       ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-          if (selectedIds.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.fitness_center),
-                label: Text('Luyện tập (${selectedIds.length})'),
-                onPressed: trainSelected,
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                  backgroundColor: Colors.green,
+                    );
+                  },
                 ),
               ),
-            ),
-        ],
+              if (selectedIds.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.fitness_center),
+                    label: Text('Luyện tập (${selectedIds.length})'),
+                    onPressed: trainSelected,
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                      backgroundColor: Colors.green,
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
       ),
     );
   }
+}
+
+bool _isSameWord(WordModel a, WordModel b) {
+  return a.word == b.word &&
+      a.meaning == b.meaning &&
+      a.phonetic == b.phonetic &&
+      a.usage == b.usage &&
+      a.isLearned == b.isLearned &&
+      const DeepCollectionEquality().equals(a.examples, b.examples) &&
+      listEquals(a.imageBytes, b.imageBytes);
 }
