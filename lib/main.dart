@@ -9,28 +9,70 @@ import 'add_word_screen.dart';
 import 'firebase_options.dart';
 import 'test_tab.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-
-// ✅ Thêm dòng này:
+import 'package:hive_flutter/hive_flutter.dart'; // đã có rồi
+import 'word_model.dart'; // 👈 Bổ sung dòng này
 
 Future<List<Map<String, dynamic>>> fetchWords({bool isLearned = false}) async {
-  final querySnapshot = await FirebaseFirestore.instance
+  final snapshot = await FirebaseFirestore.instance
       .collection('words')
       .where('isLearned', isEqualTo: isLearned)
+      .withConverter<Map<String, dynamic>>(
+        fromFirestore: (snap, _) => snap.data()!,
+        toFirestore: (data, _) => data,
+      )
       .get();
 
-  return querySnapshot.docs.map((doc) {
+  return snapshot.docs.map((doc) {
     final data = doc.data();
+    final rawExamples = data['examples'];
+
+    final examples = (rawExamples is List)
+        ? rawExamples
+              .whereType<Map>()
+              .map(
+                (e) => {
+                  'en': e['en']?.toString() ?? '',
+                  'vi': e['vi']?.toString() ?? '',
+                },
+              )
+              .toList()
+        : [];
+
     return {
-      'id': doc.id, // để sau này sửa hoặc xóa dễ
-      'word': data['word'],
-      'meaning': data['meaning'],
-      'phonetic': data['phonetic'],
-      'usage': data['usage'],
-      'examples': List<Map<String, dynamic>>.from(data['examples'] ?? []),
+      'id': doc.id,
+      'word': data['word'] ?? '',
+      'meaning': data['meaning'] ?? '',
+      'phonetic': data['phonetic'] ?? '',
+      'usage': data['usage'] ?? '',
+      'examples': examples,
       'imageBytes': data['imageBytes'],
       'isLearned': data['isLearned'] ?? false,
     };
   }).toList();
+}
+
+// ✅ Thêm dòng này:
+
+Future<List<Map<String, dynamic>>> fetchWordsFromHive({
+  bool isLearned = false,
+}) async {
+  final box = Hive.box<WordModel>('wordsBox');
+
+  return box.values
+      .where((w) => w.isLearned == isLearned)
+      .map(
+        (w) => {
+          'id': w.id,
+          'word': w.word,
+          'meaning': w.meaning,
+          'phonetic': w.phonetic,
+          'usage': w.usage,
+          'examples': w.examples,
+          'imageBytes': w.imageBytes,
+          'isLearned': w.isLearned,
+        },
+      )
+      .toList();
 }
 
 List<Map<String, dynamic>> learnedWords = [
@@ -41,9 +83,17 @@ List<Map<String, dynamic>> learnedWords = [
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized(); // Bắt buộc
+
+  // ✅ Bắt đầu khởi tạo Hive
+  final appDocDir = await getApplicationDocumentsDirectory();
+  await Hive.initFlutter(appDocDir.path);
+  Hive.registerAdapter(WordModelAdapter());
+  await Hive.openBox<WordModel>('wordsBox');
+
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   ); // Chờ khởi tạo Firebase
+
   runApp(const EnglishApp());
 }
 
@@ -84,14 +134,29 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
     Connectivity().onConnectivityChanged.listen((result) async {
       final nowOnline = result != ConnectivityResult.none;
 
+      setState(() {
+        isOnline = nowOnline;
+      });
+
       if (!isOnline && nowOnline && pendingQueue.isNotEmpty) {
-        // 🔁 Đang offline mà giờ có mạng + có từ chờ → tiến hành đồng bộ
+        final existingWords = await fetchWords(); // lấy toàn bộ từ đang có
+
         for (var word in pendingQueue) {
-          await FirebaseFirestore.instance.collection('words').add(word);
+          // Kiểm tra xem từ đã tồn tại chưa (theo word + meaning)
+          final alreadyExists = existingWords.any(
+            (w) => w['word'] == word['word'] && w['meaning'] == word['meaning'],
+          );
+
+          if (!alreadyExists) {
+            await FirebaseFirestore.instance.collection('words').add(word);
+          }
+
+          // Nếu id là offline_... thì xoá khỏi danh sách hiển thị
+          unlearnedWords.removeWhere((w) => w['id'] == word['id']);
         }
 
         setState(() {
-          pendingQueue.clear(); // 🧹 xoá queue sau khi sync xong
+          pendingQueue.clear();
           isOnline = true;
         });
 
@@ -101,12 +166,7 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
           );
         }
 
-        await loadWords(); // Tải lại dữ liệu mới sau khi đồng bộ
-      } else {
-        // Nếu không có gì đặc biệt → chỉ cập nhật trạng thái mạng
-        setState(() {
-          isOnline = nowOnline;
-        });
+        await loadWords(); // nạp lại danh sách từ
       }
     });
   }
@@ -119,14 +179,54 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
   }
 
   Future<void> loadWords() async {
-    final unlearned = await fetchWords(isLearned: false);
-    final learned = await fetchWords(isLearned: true);
+    final stopwatch = Stopwatch()..start();
+
+    // ⬇️ 1. LUÔN load từ Hive trước để hiển thị ngay
+    unlearnedWords = await fetchWordsFromHive(isLearned: false);
+    learnedOnly = await fetchWordsFromHive(isLearned: true);
 
     setState(() {
-      unlearnedWords = unlearned;
-      learnedOnly = learned;
-      isLoading = false;
+      isLoading = false; // ⬅️ Load xong cache rồi, cho hiển thị ngay
     });
+
+    // ⬇️ 2. Nếu online thì tiếp tục tải từ Firestore để cập nhật
+    if (isOnline) {
+      final results = await Future.wait([
+        fetchWords(isLearned: false),
+        fetchWords(isLearned: true),
+      ]);
+
+      final unlearned = results[0];
+      final learned = results[1];
+
+      final box = Hive.box<WordModel>('wordsBox');
+      await box.clear(); // xoá cache cũ
+
+      final Map<String, WordModel> newWordsMap = {
+        for (var word in [...unlearned, ...learned])
+          word['id']: WordModel(
+            id: word['id'],
+            word: word['word'],
+            meaning: word['meaning'],
+            phonetic: word['phonetic'],
+            usage: word['usage'],
+            examples: List<Map<String, String>>.from(word['examples'] ?? []),
+            imageBytes: word['imageBytes']?.cast<int>(),
+            isLearned: word['isLearned'] ?? false,
+          ),
+      };
+
+      await box.putAll(newWordsMap);
+
+      // ⬇️ Cập nhật danh sách sau khi đồng bộ
+      setState(() {
+        unlearnedWords = unlearned;
+        learnedOnly = learned;
+      });
+    }
+
+    stopwatch.stop();
+    print('⏱ loadWords() xong sau ${stopwatch.elapsedMilliseconds}ms');
   }
 
   void _openAddWordScreen() async {
@@ -142,30 +242,24 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
     );
 
     if (result != null && result['success'] == true) {
-      if (result['updatedWord'] != null) {
-        // ✅ Nếu là edit online
-        final updated = result['updatedWord'] as Map<String, dynamic>;
-        final id = result['wordId'];
-        final index = unlearnedWords.indexWhere((e) => e['id'] == id);
-        if (index != -1) {
-          unlearnedWords[index] = {'id': id, ...updated};
-        }
-      } else if (result['offline'] == true) {
-        // ✅ Nếu đang offline
-        final word = result['word'] as Map<String, dynamic>;
-        final id = 'offline_${DateTime.now().millisecondsSinceEpoch}';
-        unlearnedWords.add({'id': id, ...word});
-        pendingQueue.add({'id': id, ...word});
-      } else {
-        // ✅ Nếu đang online và thêm mới
-        final newWords = await fetchWords(isLearned: false);
-        setState(() {
-          unlearnedWords.clear();
-          unlearnedWords.addAll(newWords);
-        });
-      }
+      final Map<String, dynamic> newWord = Map<String, dynamic>.from(
+        result['updatedWord'] ?? result['word'],
+      );
 
-      setState(() {}); // ✅ Cập nhật lại hiển thị
+      // Tạo id riêng nếu offline
+      final id =
+          result['wordId'] ??
+          'offline_${DateTime.now().millisecondsSinceEpoch}';
+      final wordWithId = {'id': id, ...newWord};
+
+      setState(() {
+        unlearnedWords.add(wordWithId);
+      });
+
+      // Nếu offline thì cho vào hàng đợi
+      if (result['offline'] == true) {
+        pendingQueue.add(newWord);
+      }
     }
   }
 
@@ -339,7 +433,7 @@ class _WordListTabState extends State<WordListTab> {
                             children: [
                               IconButton(
                                 icon: const Icon(Icons.volume_up),
-                                onPressed: null, // Đã xoá chức năng phát âm
+                                onPressed: null, // Tạm thời chưa dùng
                               ),
 
                               Expanded(
@@ -351,37 +445,106 @@ class _WordListTabState extends State<WordListTab> {
                                   ),
                                 ),
                               ),
-                              IconButton(
-                                icon: const Icon(Icons.edit),
-                                onPressed: () async {
-                                  final result = await Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => AddWordScreen(
-                                        existingWords: widget.words,
-                                        initialData: word,
-                                        wordId: word['id'],
-                                        isOnline: widget
-                                            .isOnline, // ✅ sửa lại như thế này
-                                      ),
-                                    ),
-                                  );
 
-                                  if (result != null &&
-                                      result['success'] == true) {
-                                    // 👉 nếu từ đã được chỉnh sửa thì nạp lại từ Firebase
-                                    final newWords = await fetchWords(
-                                      isLearned: widget.title == 'Từ đã học',
-                                    );
-                                    setState(() {
-                                      widget.words.clear();
-                                      widget.words.addAll(newWords);
-                                    });
-                                  }
-                                },
+                              // 👇 Hai nút nằm cạnh nhau
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.edit,
+                                      color: Colors.blue,
+                                    ),
+                                    tooltip: 'Sửa từ',
+                                    onPressed: () async {
+                                      final result = await Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) => AddWordScreen(
+                                            existingWords: widget.words,
+                                            initialData: word,
+                                            wordId: word['id'],
+                                            isOnline: widget.isOnline,
+                                          ),
+                                        ),
+                                      );
+
+                                      if (result != null &&
+                                          result['success'] == true) {
+                                        final updated =
+                                            result['updatedWord']
+                                                as Map<String, dynamic>;
+                                        final id = result['wordId'];
+
+                                        setState(() {
+                                          final index = widget.words.indexWhere(
+                                            (w) => w['id'] == id,
+                                          );
+                                          if (index != -1) {
+                                            widget.words[index] = {
+                                              'id': id,
+                                              ...updated,
+                                            };
+                                          }
+                                        });
+                                      }
+                                    },
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.delete,
+                                      color: Colors.red,
+                                    ),
+                                    tooltip: 'Xoá từ',
+                                    onPressed: () async {
+                                      final id = word['id'];
+                                      final confirm = await showDialog<bool>(
+                                        context: context,
+                                        builder: (context) => AlertDialog(
+                                          title: const Text('Xoá từ này?'),
+                                          content: const Text(
+                                            'Bạn có chắc muốn xoá từ này không?',
+                                          ),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () =>
+                                                  Navigator.pop(context, false),
+                                              child: const Text('Huỷ'),
+                                            ),
+                                            TextButton(
+                                              onPressed: () =>
+                                                  Navigator.pop(context, true),
+                                              child: const Text('Xoá'),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+
+                                      if (confirm == true) {
+                                        setState(() {
+                                          widget.words.removeWhere(
+                                            (w) => w['id'] == id,
+                                          );
+                                        });
+
+                                        if (widget.isOnline &&
+                                            id != null &&
+                                            !id.toString().startsWith(
+                                              'offline_',
+                                            )) {
+                                          await FirebaseFirestore.instance
+                                              .collection('words')
+                                              .doc(id)
+                                              .delete();
+                                        }
+                                      }
+                                    },
+                                  ),
+                                ],
                               ),
                             ],
                           ),
+
                           if (word['phonetic'] != null)
                             Padding(
                               padding: const EdgeInsets.only(left: 16),
@@ -397,7 +560,7 @@ class _WordListTabState extends State<WordListTab> {
                               style: const TextStyle(fontSize: 16),
                             ),
                           ),
-                          ButtonBar(
+                          OverflowBar(
                             alignment: MainAxisAlignment.start,
                             children: [
                               TextButton(
