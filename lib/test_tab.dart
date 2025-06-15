@@ -341,7 +341,11 @@ class _BottomBoxes extends StatelessWidget {
 class PracticeBoxes extends StatelessWidget {
   final List<Map<String, dynamic>> words;
   final List<Map<String, dynamic>> unlearnedWords;
-  const PracticeBoxes({required this.words, required this.unlearnedWords});
+  const PracticeBoxes({
+    super.key,
+    required this.words,
+    required this.unlearnedWords,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -372,7 +376,7 @@ class PracticeBoxes extends StatelessWidget {
         elevation: 2,
         child: Padding(
           padding: const EdgeInsets.all(12),
-          child: FlashCardQuizBox(unlearnedWords: this.unlearnedWords),
+          child: FlashCardQuizBox(unlearnedWords: unlearnedWords),
         ),
       ),
     );
@@ -523,6 +527,7 @@ class FlashcardScreenState extends State<FlashcardScreen> {
   int timeLeft = 15;
   late List<String> options;
   late String correctAnswer;
+  ImageProvider? firstImage;
 
   @override
   void initState() {
@@ -690,18 +695,47 @@ class _FlashCardQuizBoxState extends State<FlashCardQuizBox> {
   bool showHint = false;
   bool showExamples = false;
   bool isFinished = false;
-
+  MemoryImage? firstImage; // ✅ khai báo biến ảnh đầu tiên
   List<Map<String, dynamic>> flashWords = [];
   List<String> choices = [];
 
   @override
   void initState() {
     super.initState();
+
     flashWords = widget.unlearnedWords
-        .where((w) => w['imageBytes'] != null)
+        .where(
+          (w) =>
+              w['imageBytes'] != null && (w['imageBytes'] as List).isNotEmpty,
+        )
         .toList();
-    flashWords.shuffle();
+
+    flashWords.shuffle(); // trộn ngẫu nhiên
+
+    if (flashWords.isNotEmpty) {
+      // 👉 hiện ảnh đầu tiên ngay
+      firstImage = MemoryImage(
+        Uint8List.fromList(List<int>.from(flashWords[0]['imageBytes'])),
+      );
+
+      // 🧠 tải ảnh còn lại ngầm
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        preloadRemainingImages();
+      });
+    }
+
     prepareChoices();
+  }
+
+  void preloadRemainingImages() async {
+    for (int i = 1; i < flashWords.length; i++) {
+      final bytes = flashWords[i]['imageBytes'];
+      if (bytes != null) {
+        final image = MemoryImage(Uint8List.fromList(List<int>.from(bytes)));
+        await precacheImage(image, context);
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+    }
   }
 
   @override
@@ -739,12 +773,19 @@ class _FlashCardQuizBoxState extends State<FlashCardQuizBox> {
           // ẢNH
           ClipRRect(
             borderRadius: BorderRadius.circular(16),
-            child: Image.memory(
-              Uint8List.fromList(List<int>.from(word['imageBytes'])),
-              width: 180,
-              height: 180,
-              fit: BoxFit.cover,
-            ),
+            child: currentIndex == 0 && firstImage != null
+                ? Image(
+                    image: firstImage!,
+                    width: 180,
+                    height: 180,
+                    fit: BoxFit.cover,
+                  )
+                : Image.memory(
+                    Uint8List.fromList(List<int>.from(word['imageBytes'])),
+                    width: 180,
+                    height: 180,
+                    fit: BoxFit.cover,
+                  ),
           ),
 
           const SizedBox(height: 16),
@@ -783,11 +824,11 @@ class _FlashCardQuizBoxState extends State<FlashCardQuizBox> {
                   showExamples = !showExamples;
                 });
               },
-              child: const Text('Xem ví dụ'),
               style: TextButton.styleFrom(
                 backgroundColor: Colors.grey.shade400,
                 foregroundColor: Colors.white,
               ),
+              child: const Text('Xem ví dụ'),
             )
           else
             Row(
@@ -800,20 +841,20 @@ class _FlashCardQuizBoxState extends State<FlashCardQuizBox> {
                       isCorrect = true;
                     });
                   },
-                  child: const Text('Gợi ý'),
                   style: TextButton.styleFrom(
                     backgroundColor: const Color(0xFF87b470),
                     foregroundColor: Colors.white,
                   ),
+                  child: const Text('Gợi ý'),
                 ),
                 const SizedBox(width: 12),
                 TextButton(
                   onPressed: nextCard,
-                  child: const Text('Bỏ qua'),
                   style: TextButton.styleFrom(
                     backgroundColor: const Color(0xFFbdbdbd),
                     foregroundColor: Colors.white,
                   ),
+                  child: const Text('Bỏ qua'),
                 ),
               ],
             ),
@@ -888,10 +929,10 @@ class _FlashCardQuizBoxState extends State<FlashCardQuizBox> {
                       prepareChoices();
                     });
                   },
-                  child: const Text('Luyện lại'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.redAccent,
                   ),
+                  child: const Text('Luyện lại'),
                 ),
               ],
             ),

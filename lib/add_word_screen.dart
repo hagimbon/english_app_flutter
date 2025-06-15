@@ -3,6 +3,8 @@ import 'dart:typed_data'; // ✅ để dùng Uint8List
 import 'package:image/image.dart' as img; // ✅ để resize ảnh
 import 'package:image_picker/image_picker.dart'; // ✅ để chọn ảnh từ thư viện
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:hive/hive.dart';
+import 'models/word_model.dart'; // 👈 đường dẫn này cần đúng với vị trí file bố đã lưu
 
 class AddWordScreen extends StatefulWidget {
   final List<Map<String, dynamic>> existingWords;
@@ -11,12 +13,12 @@ class AddWordScreen extends StatefulWidget {
   final bool isOnline; // ✅ thêm dòng này
 
   const AddWordScreen({
-    Key? key,
+    super.key,
     required this.existingWords,
     this.initialData,
     this.wordId,
     required this.isOnline, // ✅ thêm dòng này
-  }) : super(key: key);
+  });
 
   @override
   State<AddWordScreen> createState() => _AddWordScreenState();
@@ -61,6 +63,16 @@ class _AddWordScreenState extends State<AddWordScreen> {
     };
 
     if (widget.isOnline) {
+      // ✅ Trả về dữ liệu để cập nhật UI NGAY
+      if (mounted) {
+        Navigator.pop(context, {
+          'success': true,
+          'updatedWord': wordData,
+          'wordId': widget.wordId,
+        });
+      }
+
+      // 🕓 Sau đó lưu ngầm lên Firebase
       try {
         if (widget.wordId != null) {
           await FirebaseFirestore.instance
@@ -70,25 +82,35 @@ class _AddWordScreenState extends State<AddWordScreen> {
         } else {
           await FirebaseFirestore.instance.collection('words').add(wordData);
         }
-        if (mounted) {
-          Navigator.pop(context, {
-            'success': true,
-            'updatedWord': wordData, // ✅ gửi dữ liệu về để cập nhật giao diện
-            'wordId': widget.wordId,
-          });
-        }
       } catch (e) {
         debugPrint('❌ Lỗi khi lưu Firebase: $e');
-        if (mounted) {
-          Navigator.pop(context, {
-            'success': true,
-            'offline': true,
-            'word': wordData,
-          });
-        }
       }
     } else {
-      // ❗ Lưu vào queue nếu offline
+      // ⬇️ Khi offline, vừa đưa về màn hình chính, vừa lưu vào Hive cache
+      final wordBox = Hive.box<WordModel>('wordsBox');
+      final id = 'offline_${DateTime.now().millisecondsSinceEpoch}';
+
+      final wordModel = WordModel(
+        id: id,
+        word: wordData['word'] as String? ?? '',
+        meaning: wordData['meaning'] as String? ?? '',
+        phonetic: wordData['phonetic'] as String? ?? '',
+        usage: wordData['usage'] as String? ?? '',
+        examples: (wordData['examples'] as List<dynamic>? ?? [])
+            .map(
+              (e) => {
+                'en': e['en'] as String? ?? '',
+                'vi': e['vi'] as String? ?? '',
+              },
+            )
+            .toList(),
+
+        imageBytes: (wordData['imageBytes'] as Uint8List?)?.toList(),
+        isLearned: wordData['isLearned'] as bool? ?? false,
+      );
+
+      await wordBox.put(id, wordModel);
+
       if (mounted) {
         Navigator.pop(context, {
           'success': true,
@@ -128,12 +150,32 @@ class _AddWordScreenState extends State<AddWordScreen> {
   void initState() {
     super.initState();
 
+    // Gán dữ liệu cơ bản
     _englishController.text = widget.initialData?['word'] ?? '';
     _meaningController.text = widget.initialData?['meaning'] ?? '';
     _phoneticController.text = widget.initialData?['phonetic'] ?? '';
     _usageController.text = widget.initialData?['usage'] ?? '';
-
     isLearned = widget.initialData?['isLearned'] ?? false;
+
+    // Gán lại các ví dụ nếu có
+    final exampleList = widget.initialData?['examples'] as List<dynamic>? ?? [];
+    for (final e in exampleList) {
+      exampleEnControllers.add(TextEditingController(text: e['en'] ?? ''));
+      exampleViControllers.add(TextEditingController(text: e['vi'] ?? ''));
+    }
+
+    // Gán lại ảnh nếu có
+    final rawImage = widget.initialData?['imageBytes'];
+    if (rawImage != null && rawImage is List) {
+      imageBytes = Uint8List.fromList(List<int>.from(rawImage));
+    }
+
+    // Gán lại ảnh nếu có
+    if (widget.initialData?['imageBytes'] != null) {
+      imageBytes = Uint8List.fromList(
+        List<int>.from(widget.initialData!['imageBytes']),
+      );
+    }
   }
 
   void _addExampleGroup() {
