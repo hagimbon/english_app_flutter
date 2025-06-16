@@ -8,8 +8,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:typed_data';
-import 'services/load_service.dart';
-import 'package:english_app/services/load_service.dart';
+import 'load_service.dart';
 
 List<Map<String, dynamic>> learnedWords = [
   {'word': 'apple', 'meaning': 'quả táo', 'phonetic': '/ˈæp.əl/'},
@@ -27,14 +26,10 @@ class EnglishApp extends StatelessWidget {
 }
 
 class TestTab extends StatefulWidget {
-  final ValueNotifier<List<Map<String, dynamic>>> wordsNotifier;
-  final ValueNotifier<List<Map<String, dynamic>>> unlearnedNotifier;
+  final List<Map<String, dynamic>> words;
+  final List<Map<String, dynamic>> unlearnedWords;
 
-  const TestTab({
-    super.key,
-    required this.wordsNotifier,
-    required this.unlearnedNotifier,
-  });
+  const TestTab({super.key, required this.words, required this.unlearnedWords});
 
   @override
   State<TestTab> createState() => _TestTabState();
@@ -46,17 +41,7 @@ class _TestTabState extends State<TestTab> {
   @override
   void initState() {
     super.initState();
-    _controller = PageController(initialPage: 1);
-
-    Future.delayed(Duration.zero, () async {
-      final unlearned = await LoadService.loadUnlearnedWords();
-      final learned = await LoadService.loadLearnedWords();
-
-      if (!mounted) return;
-
-      widget.unlearnedNotifier.value = unlearned;
-      widget.wordsNotifier.value = learned;
-    });
+    _controller = PageController(initialPage: 1); // 👉 hiển thị màn 2
   }
 
   @override
@@ -72,32 +57,20 @@ class _TestTabState extends State<TestTab> {
         controller: _controller,
         scrollDirection: Axis.vertical,
         children: [
-          // 🟡 Dùng ValueListenableBuilder để theo dõi thay đổi danh sách
-          ValueListenableBuilder<List<Map<String, dynamic>>>(
-            valueListenable: widget.wordsNotifier,
-            builder: (context, words, _) {
-              if (words.isEmpty) {
-                return const Center(
-                  child: Text(
-                    'Không có từ để luyện tập',
-                    style: TextStyle(fontSize: 18, color: Colors.red),
-                  ),
-                );
-              } else {
-                return FlashcardScreen(words: words);
-              }
-            },
-          ),
+          // 👉 Nếu không có từ nào thì hiển thị thông báo
+          if (widget.words.isEmpty)
+            const Center(
+              child: Text(
+                'Không có từ để luyện tập',
+                style: TextStyle(fontSize: 18, color: Colors.red),
+              ),
+            )
+          else
+            FlashcardScreen(words: widget.words),
 
-          // 🟡 Box luyện tập
-          ValueListenableBuilder<List<Map<String, dynamic>>>(
-            valueListenable: widget.unlearnedNotifier,
-            builder: (context, unlearnedWords, _) {
-              return PracticeBoxes(
-                words: widget.wordsNotifier.value,
-                unlearnedWords: unlearnedWords,
-              );
-            },
+          PracticeBoxes(
+            words: widget.words,
+            unlearnedWords: widget.unlearnedWords,
           ),
         ],
       ),
@@ -547,7 +520,6 @@ class FlashCardQuizBox extends StatefulWidget {
 }
 
 class FlashcardScreenState extends State<FlashcardScreen> {
-  bool isLoading = true;
   int currentIndex = 0;
   Timer? _timer;
   bool isCorrect = false;
@@ -717,7 +689,6 @@ class FlashcardScreenState extends State<FlashcardScreen> {
 }
 
 class _FlashCardQuizBoxState extends State<FlashCardQuizBox> {
-  bool isLoading = true; // ✅ Khai báo biến isLoading
   int currentIndex = 0;
   String? selected;
   bool? isCorrect;
@@ -733,44 +704,38 @@ class _FlashCardQuizBoxState extends State<FlashCardQuizBox> {
   void initState() {
     super.initState();
 
-    Future.delayed(Duration.zero, () {
-      flashWords = widget.unlearnedWords
-          .where(
-            (w) =>
-                w['imageBytes'] != null && (w['imageBytes'] as List).isNotEmpty,
-          )
-          .toList();
+    flashWords = widget.unlearnedWords
+        .where(
+          (w) =>
+              w['imageBytes'] != null && (w['imageBytes'] as List).isNotEmpty,
+        )
+        .toList();
 
-      flashWords.shuffle();
+    flashWords.shuffle(); // trộn ngẫu nhiên
 
-      if (flashWords.isNotEmpty) {
-        firstImage = MemoryImage(
-          Uint8List.fromList(List<int>.from(flashWords[0]['imageBytes'])),
-        );
+    if (flashWords.isNotEmpty) {
+      // 👉 hiện ảnh đầu tiên ngay
+      firstImage = MemoryImage(
+        Uint8List.fromList(List<int>.from(flashWords[0]['imageBytes'])),
+      );
 
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          preloadRemainingImages();
-        });
-
-        prepareChoices();
-      }
-
-      // ✅ Bỏ trạng thái loading sau khi xử lý xong
-      setState(() {
-        isLoading = false;
+      // 🧠 tải ảnh còn lại ngầm
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        preloadRemainingImages();
       });
-    });
+    }
+
+    prepareChoices();
   }
 
   void preloadRemainingImages() async {
     for (int i = 1; i < flashWords.length; i++) {
+      if (!mounted) return; // 🛡 kiểm tra widget chưa bị dispose
+
       final bytes = flashWords[i]['imageBytes'];
       if (bytes != null) {
         final image = MemoryImage(Uint8List.fromList(List<int>.from(bytes)));
-
-        if (!mounted) return; // ✅ Thêm dòng này trước khi dùng context
         await precacheImage(image, context);
-
         await Future.delayed(const Duration(milliseconds: 100));
       }
     }
@@ -778,10 +743,6 @@ class _FlashCardQuizBoxState extends State<FlashCardQuizBox> {
 
   @override
   Widget build(BuildContext context) {
-    if (isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
     if (flashWords.isEmpty) {
       return const Center(child: Text('Không có từ có ảnh để luyện'));
     }

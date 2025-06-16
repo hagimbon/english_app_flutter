@@ -74,11 +74,11 @@ class _AddWordScreenState extends State<AddWordScreen> {
 
       // 🕓 Sau đó lưu ngầm lên Firebase
       try {
-        if (widget.wordId != null) {
+        if (widget.wordId != null && widget.isOnline) {
           await FirebaseFirestore.instance
               .collection('words')
               .doc(widget.wordId)
-              .update(wordData);
+              .set(wordData, SetOptions(merge: true)); // ✅ Sửa ở đây
         } else {
           await FirebaseFirestore.instance.collection('words').add(wordData);
         }
