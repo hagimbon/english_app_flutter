@@ -12,6 +12,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:hive_flutter/hive_flutter.dart'; // đã có rồi
 import 'word_model.dart'; // 👈 Bổ sung dòng này
 import 'load_service.dart';
+import 'dart:typed_data';
 
 final GlobalKey<_MainTabNavigatorState> mainTabStateGlobalKey =
     GlobalKey<_MainTabNavigatorState>();
@@ -399,16 +400,51 @@ class _WordListTabState extends State<WordListTab> {
     });
   }
 
-  void deleteSelected() {
-    for (var id in selectedIds) {
-      FirebaseFirestore.instance.collection('words').doc(id).delete();
+  void deleteSelected() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Bạn có muốn xóa từ đã chọn?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Không'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Xóa'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      final box = Hive.box<WordModel>('wordsBox');
+
+      for (var id in selectedIds) {
+        // Xóa trong Hive
+        await box.delete(id);
+
+        // Xóa trên Firestore nếu online và không phải từ offline
+        if (widget.isOnline && !id.toString().startsWith('offline_')) {
+          await FirebaseFirestore.instance.collection('words').doc(id).delete();
+        }
+      }
+
+      setState(() {
+        widget.words.removeWhere((word) => selectedIds.contains(word['id']));
+        selectedIds.clear();
+      });
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('🗑 Đã xóa các từ đã chọn')));
+    } else {
+      // Nếu chọn "Không", cũng clear lựa chọn
+      setState(() {
+        selectedIds.clear();
+      });
     }
-    setState(() {
-      selectedIds.clear();
-    });
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('🗑 Đã xoá các từ đã chọn')));
   }
 
   void trainSelected() {
@@ -451,7 +487,7 @@ class _WordListTabState extends State<WordListTab> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('${widget.title} (${widget.words.length})'),
-            if (widget.title == 'Từ đã học')
+            if (widget.title == 'Từ đã học' || widget.title == 'Từ chưa học')
               TextField(
                 onChanged: (value) => setState(() => searchText = value),
                 decoration: const InputDecoration(
@@ -463,7 +499,7 @@ class _WordListTabState extends State<WordListTab> {
           ],
         ),
         actions: [
-          if (widget.title == 'Từ đã học') ...[
+          if (widget.title == 'Từ đã học' || widget.title == 'Từ chưa học') ...[
             IconButton(
               icon: Icon(
                 sortType == 'A-Z' ? Icons.sort_by_alpha : Icons.access_time,
@@ -481,14 +517,23 @@ class _WordListTabState extends State<WordListTab> {
           if (selectedIds.isNotEmpty)
             Row(
               children: [
-                Text('${selectedIds.length} từ'),
-                IconButton(
-                  icon: const Icon(Icons.delete, color: Colors.red),
-                  onPressed: deleteSelected,
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Text('${selectedIds.length} từ'),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.fitness_center),
-                  onPressed: trainSelected,
+                  icon: const Icon(Icons.close),
+                  tooltip: 'Bỏ chọn',
+                  onPressed: () {
+                    setState(() {
+                      selectedIds.clear();
+                    });
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete, color: Colors.red),
+                  tooltip: 'Xoá từ đã chọn',
+                  onPressed: deleteSelected,
                 ),
               ],
             ),
@@ -506,7 +551,113 @@ class _WordListTabState extends State<WordListTab> {
                 final isSelected = selectedIds.contains(id);
 
                 return GestureDetector(
-                  onTap: () => toggleSelect(id),
+                  onTap: () {
+                    showDialog(
+                      context: context,
+                      builder: (_) => Dialog(
+                        child: Stack(
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: SingleChildScrollView(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      word['word'] ?? '',
+                                      style: const TextStyle(
+                                        fontSize: 24,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    if (word['phonetic'] != null &&
+                                        word['phonetic'].toString().isNotEmpty)
+                                      Text(
+                                        '/${word['phonetic']}/',
+                                        style: const TextStyle(
+                                          color: Colors.grey,
+                                        ),
+                                      ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      '🇻🇳 ${word['meaning'] ?? ''}',
+                                      style: const TextStyle(fontSize: 18),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    if (word['usage'] != null &&
+                                        word['usage'].toString().isNotEmpty)
+                                      Text('📌 Cách dùng: ${word['usage']}'),
+                                    const SizedBox(height: 8),
+                                    if ((word['examples'] ?? []).isNotEmpty)
+                                      Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            '📚 Ví dụ:',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          ...List<Widget>.from(
+                                            (word['examples'] ?? []).map<
+                                              Widget
+                                            >(
+                                              (e) => Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      vertical: 4,
+                                                    ),
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      '🇬🇧 ${e['en'] ?? ''}',
+                                                      style: const TextStyle(
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                      ),
+                                                    ),
+                                                    Text(
+                                                      '🇻🇳 ${e['vi'] ?? ''}',
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    if (word['imageBytes'] != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 12),
+                                        child: Image.memory(
+                                          Uint8List.fromList(
+                                            List<int>.from(word['imageBytes']),
+                                          ),
+                                          width: 200,
+                                          height: 200,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: IconButton(
+                                icon: const Icon(Icons.close),
+                                onPressed: () => Navigator.pop(context),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+
                   child: Card(
                     color: isSelected ? Colors.blue.shade50 : null,
                     margin: const EdgeInsets.symmetric(
@@ -539,6 +690,25 @@ class _WordListTabState extends State<WordListTab> {
                               Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
+                                  IconButton(
+                                    icon: Icon(
+                                      selectedIds.contains(id)
+                                          ? Icons.check_circle
+                                          : Icons.radio_button_unchecked,
+                                      color: selectedIds.contains(id)
+                                          ? Colors.green
+                                          : null,
+                                    ),
+                                    tooltip: selectedIds.contains(id)
+                                        ? 'Bỏ chọn'
+                                        : 'Chọn',
+                                    onPressed: () {
+                                      toggleSelect(
+                                        id,
+                                      ); // Gọi lại hàm chọn có sẵn
+                                    },
+                                  ),
+
                                   IconButton(
                                     icon: const Icon(
                                       Icons.edit,
@@ -601,6 +771,7 @@ class _WordListTabState extends State<WordListTab> {
                                       }
                                     },
                                   ),
+
                                   IconButton(
                                     icon: const Icon(
                                       Icons.delete,
@@ -676,81 +847,6 @@ class _WordListTabState extends State<WordListTab> {
                               word['meaning'] ?? '',
                               style: const TextStyle(fontSize: 16),
                             ),
-                          ),
-                          OverflowBar(
-                            alignment: MainAxisAlignment.start,
-                            children: [
-                              TextButton(
-                                onPressed: () {
-                                  showDialog(
-                                    context: context,
-                                    builder: (_) => AlertDialog(
-                                      title: const Text('Cách dùng'),
-                                      content: Text(
-                                        word['usage'] ?? 'Không có dữ liệu',
-                                      ),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () =>
-                                              Navigator.pop(context),
-                                          child: const Text('Đóng'),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                                child: const Text('Cách dùng'),
-                              ),
-                              TextButton(
-                                onPressed: () {
-                                  showDialog(
-                                    context: context,
-                                    builder: (_) => AlertDialog(
-                                      title: const Text('Ví dụ'),
-                                      content: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: (word['examples'] ?? [])
-                                            .map<Widget>((e) {
-                                              return Padding(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      vertical: 4,
-                                                    ),
-                                                child: Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    Text(
-                                                      '🇬🇧 ${e['en'] ?? ''}',
-                                                      style: const TextStyle(
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                      ),
-                                                    ),
-                                                    Text(
-                                                      '🇻🇳 ${e['vi'] ?? ''}',
-                                                    ),
-                                                  ],
-                                                ),
-                                              );
-                                            })
-                                            .toList(),
-                                      ),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () =>
-                                              Navigator.pop(context),
-                                          child: const Text('Đóng'),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                                child: const Text('Ví dụ'),
-                              ),
-                            ],
                           ),
                         ],
                       ),
