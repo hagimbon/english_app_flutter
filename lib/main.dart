@@ -9,8 +9,8 @@ import 'add_word_screen.dart';
 import 'firebase_options.dart';
 import 'test_tab.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:hive_flutter/hive_flutter.dart'; // đã có rồi
-import 'word_model.dart'; // 👈 Bổ sung dòng này
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:english_app/word_model.dart';
 import 'load_service.dart';
 import 'dart:typed_data';
 
@@ -128,6 +128,7 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
   List<Map<String, dynamic>> unlearnedWords = [];
   List<Map<String, dynamic>> learnedOnly = [];
   List<Map<String, dynamic>> pendingQueue = []; // ✅ Hàng đợi chờ sync
+  List<Map<String, dynamic>> practiceWords = [];
   bool isOnline = true; // ✅ Trạng thái mạng
   bool isLoading = true; // ✅ để hiện vòng tròn khi đang tải dữ liệu
 
@@ -321,7 +322,11 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
       title: 'Từ đã học',
       isOnline: isOnline, // ✅ thêm dòng này
     ),
-    TestTab(words: learnedOnly, unlearnedWords: unlearnedWords),
+    TestTab(
+      words: learnedOnly,
+      unlearnedWords: unlearnedWords,
+      practiceWords: practiceWords, // ✅ THÊM DÒNG NÀY
+    ),
   ];
 
   @override
@@ -333,19 +338,6 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
     return Scaffold(
       body: Column(
         children: [
-          Container(
-            width: double.infinity,
-            color: isOnline ? Colors.green : Colors.red,
-            padding: const EdgeInsets.all(8),
-            child: Center(
-              child: Text(
-                isOnline
-                    ? '🔵 Đang kết nối mạng'
-                    : '🔴 Không có kết nối mạng – dùng offline',
-                style: const TextStyle(color: Colors.white),
-              ),
-            ),
-          ),
           Expanded(child: _tabs[_currentIndex]), // Giữ nguyên tab
         ],
       ),
@@ -457,7 +449,8 @@ class _WordListTabState extends State<WordListTab> {
       MaterialPageRoute(
         builder: (context) => TestTab(
           words: selectedWords,
-          unlearnedWords: [], // 👈 tạm thời truyền danh sách rỗng nếu không cần
+          unlearnedWords: [], // nếu cần
+          practiceWords: selectedWords, // 👈 bổ sung dòng này để không lỗi
         ),
       ),
     );
@@ -856,19 +849,6 @@ class _WordListTabState extends State<WordListTab> {
               },
             ),
           ),
-          if (selectedIds.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.fitness_center),
-                label: Text('Luyện tập (${selectedIds.length})'),
-                onPressed: trainSelected,
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                  backgroundColor: Colors.green,
-                ),
-              ),
-            ),
         ],
       ),
     );
