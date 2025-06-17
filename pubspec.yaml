@@ -45,7 +45,8 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   hive_generator: ^2.0.1
-  build_runner: ^2.4.8  
+  build_runner: ^2.4.8 
+  analyzer: ^6.2.0 
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is

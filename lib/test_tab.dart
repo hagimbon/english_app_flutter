@@ -4,11 +4,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'add_word_screen.dart';
-import 'dart:math';
 import 'package:flutter/material.dart';
-import 'dart:async';
 import 'dart:typed_data';
-import 'load_service.dart';
 
 List<Map<String, dynamic>> learnedWords = [
   {'word': 'apple', 'meaning': 'quả táo', 'phonetic': '/ˈæp.əl/'},
@@ -28,8 +25,14 @@ class EnglishApp extends StatelessWidget {
 class TestTab extends StatefulWidget {
   final List<Map<String, dynamic>> words;
   final List<Map<String, dynamic>> unlearnedWords;
+  final List<Map<String, dynamic>> practiceWords; // ✅ thêm dòng này
 
-  const TestTab({super.key, required this.words, required this.unlearnedWords});
+  const TestTab({
+    super.key,
+    required this.words,
+    required this.unlearnedWords,
+    required this.practiceWords, // ✅ thêm dòng này
+  });
 
   @override
   State<TestTab> createState() => _TestTabState();
@@ -37,11 +40,44 @@ class TestTab extends StatefulWidget {
 
 class _TestTabState extends State<TestTab> {
   late PageController _controller;
+  late List<Map<String, dynamic>> practiceWords;
 
   @override
   void initState() {
     super.initState();
-    _controller = PageController(initialPage: 1); // 👉 hiển thị màn 2
+    _controller = PageController(initialPage: 1);
+
+    // Gán tạm để tránh lỗi null
+    practiceWords = [];
+
+    // Load practiceWords từ file
+    loadPracticeWords().then((_) {
+      setState(() {});
+    });
+  }
+
+  Future<void> savePracticeWords() async {
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File('${dir.path}/practice_words.json');
+    await file.writeAsString(jsonEncode(practiceWords));
+  }
+
+  Future<void> loadPracticeWords() async {
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File('${dir.path}/practice_words.json');
+
+    if (await file.exists()) {
+      final content = await file.readAsString();
+      final List<dynamic> data = jsonDecode(content);
+      setState(() {
+        practiceWords = data.cast<Map<String, dynamic>>();
+        print(
+          'Đã load ${practiceWords.length} từ luyện tập',
+        ); // ✅ Thêm dòng này vào trong setState
+      });
+    } else {
+      practiceWords = [];
+    }
   }
 
   @override
@@ -57,12 +93,43 @@ class _TestTabState extends State<TestTab> {
         controller: _controller,
         scrollDirection: Axis.vertical,
         children: [
-          // 👉 Nếu không có từ nào thì hiển thị thông báo
-          if (widget.words.isEmpty)
-            const Center(
-              child: Text(
-                'Không có từ để luyện tập',
-                style: TextStyle(fontSize: 18, color: Colors.red),
+          // ✅ Nếu danh sách từ đã học rỗng, hiển thị nút Thêm từ
+          if (practiceWords.isEmpty)
+            Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text(
+                    'Không có từ để luyện tập',
+                    style: TextStyle(fontSize: 18, color: Colors.red),
+                  ),
+                  const SizedBox(height: 12),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      showSelectWordsPopup(
+                        context,
+                        widget.unlearnedWords,
+                        widget.words,
+                        (selected) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            setState(() {
+                              practiceWords.addAll(
+                                selected.where(
+                                  (w) => !practiceWords.any(
+                                    (p) => p['id'] == w['id'],
+                                  ),
+                                ),
+                              );
+                            });
+                            savePracticeWords();
+                          });
+                        },
+                      );
+                    },
+                    icon: const Icon(Icons.add),
+                    label: const Text('Thêm từ để luyện'),
+                  ),
+                ],
               ),
             )
           else
@@ -71,6 +138,10 @@ class _TestTabState extends State<TestTab> {
           PracticeBoxes(
             words: widget.words,
             unlearnedWords: widget.unlearnedWords,
+            practiceWords: practiceWords, // ✅ Không cần sửa dòng này
+            key: ValueKey(
+              practiceWords.length,
+            ), // ✅ Thêm dòng này để buộc widget vẽ lại khi có dữ liệu mới
           ),
         ],
       ),
@@ -339,31 +410,88 @@ class _BottomBoxes extends StatelessWidget {
   }
 }
 
-class PracticeBoxes extends StatelessWidget {
+class PracticeBoxes extends StatefulWidget {
   final List<Map<String, dynamic>> words;
   final List<Map<String, dynamic>> unlearnedWords;
+  final List<Map<String, dynamic>> practiceWords;
+
   const PracticeBoxes({
     super.key,
     required this.words,
     required this.unlearnedWords,
+    required this.practiceWords,
   });
 
   @override
+  State<PracticeBoxes> createState() => _PracticeBoxesState();
+}
+
+class _PracticeBoxesState extends State<PracticeBoxes> {
+  late List<Map<String, dynamic>> practiceWords;
+  late List<Map<String, dynamic>> unlearnedWords;
+  late List<Map<String, dynamic>> words;
+
+  @override
+  void initState() {
+    super.initState();
+    practiceWords = List.from(widget.practiceWords);
+    unlearnedWords = widget.unlearnedWords;
+    words = widget.words;
+  }
+
+  Future<void> savePracticeWords() async {
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File('${dir.path}/practice_words.json');
+    await file.writeAsString(jsonEncode(practiceWords));
+  }
+
+  @override
   Widget build(BuildContext context) {
+    return buildPracticeBoxes(context);
+  }
+
+  Widget buildPracticeBoxes(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
+          // ✅ PHẦN HIỂN THỊ BOX BÊN DƯỚI
           Expanded(
-            child: Row(
-              children: [
-                _buildBox(context, 'Từ mới'),
-                const SizedBox(width: 8),
-                _buildBox(context, 'Từ đã học'), // 👈 đổi vị trí vào giữa
-                const SizedBox(width: 8),
-                _buildFlashCardBox(context),
-              ],
-            ),
+            child: unlearnedWords.isEmpty
+                ? Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text(
+                        'Không có từ để luyện tập',
+                        style: TextStyle(fontSize: 18, color: Colors.red),
+                      ),
+                      const SizedBox(height: 12),
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => AddWordScreen(
+                                existingWords: const [],
+                                isOnline: false,
+                              ),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.add),
+                        label: const Text('Thêm từ'),
+                      ),
+                    ],
+                  )
+                : Row(
+                    children: [
+                      _buildBox(context, 'Từ mới', practiceWords),
+                      const SizedBox(width: 8),
+                      _buildBox(context, 'Từ đã học', const []),
+                      const SizedBox(width: 8),
+                      _buildFlashCardBox(context),
+                    ],
+                  ),
           ),
         ],
       ),
@@ -383,7 +511,11 @@ class PracticeBoxes extends StatelessWidget {
     );
   }
 
-  Widget _buildBox(BuildContext ctx, String title) {
+  Widget _buildBox(
+    BuildContext ctx,
+    String title,
+    List<Map<String, dynamic>> data,
+  ) {
     return Expanded(
       child: Card(
         color: Colors.green.shade50,
@@ -396,34 +528,119 @@ class PracticeBoxes extends StatelessWidget {
               Row(
                 children: [
                   Text(
-                    title, // ✅ dùng title truyền vào thay vì fix cứng 'Từ mới'
+                    title,
                     style: const TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const Spacer(),
-                  Text('${unlearnedWords.length}'),
+
+                  // 👉 Chỉ hiển thị nút thêm nếu là "Từ mới"
+                  if (title == 'Từ mới') ...[
+                    IconButton(
+                      onPressed: () {
+                        showSelectWordsPopup(
+                          ctx,
+                          unlearnedWords,
+                          practiceWords,
+                          (selected) {
+                            setState(() {
+                              practiceWords.addAll(
+                                selected.where(
+                                  (w) => !practiceWords.any(
+                                    (p) => p['id'] == w['id'],
+                                  ),
+                                ),
+                              );
+                            });
+                            savePracticeWords();
+                          },
+                        );
+                      },
+                      icon: const Icon(Icons.add),
+                    ),
+                    const SizedBox(width: 4),
+                    IconButton(
+                      onPressed: () {
+                        showEditPracticeWordsPopup(ctx, practiceWords, (
+                          removed,
+                        ) {
+                          setState(() {
+                            practiceWords.removeWhere(
+                              (w) => removed.any((r) => r['id'] == w['id']),
+                            );
+                            unlearnedWords.addAll(removed);
+                          });
+                          savePracticeWords();
+                        });
+                      },
+                      icon: const Icon(Icons.edit),
+                      style: IconButton.styleFrom(
+                        shape: const CircleBorder(),
+                        backgroundColor: Colors.blue.shade100,
+                      ),
+                    ),
+                  ],
+                  Text('${data.length}'),
                 ],
               ),
               const SizedBox(height: 8),
               Expanded(
-                child: ListView.builder(
-                  itemCount: unlearnedWords.length,
-                  itemBuilder: (context, index) {
-                    final word = unlearnedWords[index];
-                    return _WordChoiceTile(
-                      word: word,
-                      allWords: unlearnedWords,
-                    );
-                  },
-                ),
+                child: data.isEmpty
+                    ? Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Text(
+                            'Hiện chưa có từ để luyện tập, hãy thêm vào!',
+                            style: TextStyle(fontSize: 16, color: Colors.red),
+                          ),
+                          const SizedBox(height: 12),
+                          ElevatedButton.icon(
+                            onPressed: () {
+                              showSelectWordsPopup(
+                                ctx,
+                                unlearnedWords,
+                                practiceWords,
+                                (selected) {
+                                  setState(() {
+                                    practiceWords.addAll(
+                                      selected.where(
+                                        (w) => !practiceWords.any(
+                                          (p) => p['id'] == w['id'],
+                                        ),
+                                      ),
+                                    );
+                                  });
+                                  savePracticeWords();
+                                },
+                              );
+                            },
+                            icon: const Icon(Icons.add),
+                            label: const Text('Chọn từ để luyện tập'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.indigo,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                        ],
+                      )
+                    : ListView.builder(
+                        itemCount: data.length,
+                        itemBuilder: (context, index) {
+                          final word = data[index];
+                          return _WordChoiceTile(
+                            word: word,
+                            allWords: unlearnedWords,
+                          );
+                        },
+                      ),
               ),
             ],
           ),
         ),
       ),
-    ); // ✅ phải là dấu chấm phẩy
+    );
   }
 }
 
@@ -517,175 +734,6 @@ class FlashCardQuizBox extends StatefulWidget {
 
   @override
   State<FlashCardQuizBox> createState() => _FlashCardQuizBoxState();
-}
-
-class FlashcardScreenState extends State<FlashcardScreen> {
-  int currentIndex = 0;
-  Timer? _timer;
-  bool isCorrect = false;
-  bool isWrong = false;
-  bool isTimeOut = false;
-  int timeLeft = 15;
-  late List<String> options;
-  late String correctAnswer;
-  ImageProvider? firstImage;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.words.isNotEmpty) {
-      startTimer();
-      prepareOptions();
-    }
-  }
-
-  void prepareOptions() {
-    final current = widget.words[currentIndex];
-    correctAnswer = current['meaning'];
-    options = List<String>.from(widget.words.map((e) => e['meaning']));
-    while (options.length < 10) {
-      options.add('Nghĩa phụ');
-    }
-    options.shuffle();
-    options = options.take(10).toList();
-  }
-
-  void startTimer() {
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (timeLeft > 0 && !isCorrect) {
-        setState(() {
-          timeLeft--;
-        });
-      } else {
-        timer.cancel();
-        if (!isCorrect) {
-          setState(() {
-            isTimeOut = true;
-          });
-          Future.delayed(const Duration(seconds: 2), nextWord);
-        }
-      }
-    });
-  }
-
-  void nextWord() {
-    if (widget.words.isEmpty) return; // tránh lỗi chia cho 0
-
-    setState(() {
-      currentIndex = (currentIndex + 1) % widget.words.length;
-      isCorrect = false;
-      isWrong = false;
-      isTimeOut = false;
-      timeLeft = 15;
-      prepareOptions();
-      startTimer();
-    });
-  }
-
-  void checkAnswer(String answer) {
-    if (answer == correctAnswer) {
-      setState(() {
-        isCorrect = true;
-        isWrong = false;
-      });
-      Future.delayed(const Duration(seconds: 2), nextWord);
-    } else {
-      setState(() {
-        isWrong = true;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (widget.words.isEmpty) {
-      return const Scaffold(
-        body: Center(
-          child: Text(
-            'Không có từ để hiển thị',
-            style: TextStyle(fontSize: 18, color: Colors.red),
-          ),
-        ),
-      );
-    }
-
-    final word = widget.words[currentIndex];
-
-    return Scaffold(
-      // ✅ Bọc toàn bộ trong Scaffold
-      body: SafeArea(
-        child: SingleChildScrollView(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              minHeight: MediaQuery.of(context).size.height,
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  const SizedBox(height: 16),
-                  Text(
-                    word['word'],
-                    style: const TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    word['phonetic'] ?? '',
-                    style: const TextStyle(color: Colors.grey),
-                  ),
-                  const SizedBox(height: 20),
-                  Text(
-                    '⏳ $timeLeft giây',
-                    style: const TextStyle(fontSize: 18),
-                  ),
-                  const SizedBox(height: 20),
-                  if (isCorrect)
-                    const Text(
-                      '✅ Đúng rồi!',
-                      style: TextStyle(color: Colors.green, fontSize: 20),
-                    )
-                  else if (isTimeOut)
-                    const Icon(
-                      Icons.sentiment_dissatisfied,
-                      color: Colors.red,
-                      size: 40,
-                    )
-                  else if (isWrong)
-                    const Text(
-                      '❌ Sai rồi!',
-                      style: TextStyle(color: Colors.red, fontSize: 20),
-                    ),
-                  const SizedBox(height: 20),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    alignment: WrapAlignment.center,
-                    children: options.map((e) {
-                      return ElevatedButton(
-                        onPressed: isCorrect || isTimeOut
-                            ? null
-                            : () => checkAnswer(e),
-                        child: Text(e),
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: nextWord,
-                    child: const Text('Tiếp >'),
-                  ),
-                  const SizedBox(height: 32),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _FlashCardQuizBoxState extends State<FlashCardQuizBox> {
@@ -987,4 +1035,268 @@ class _FlashCardQuizBoxState extends State<FlashCardQuizBox> {
       });
     }
   }
+}
+
+void showSelectWordsPopup(
+  BuildContext context,
+  List<Map<String, dynamic>> availableWords,
+  List<Map<String, dynamic>> currentPracticeWords,
+  void Function(List<Map<String, dynamic>>)
+  onWordsSelected, // ⚠️ Bắt buộc phải có callback này
+) {
+  TextEditingController searchController = TextEditingController();
+  List<String> selectedIds = [];
+  List<String> idsMarkedToDelete = [];
+
+  showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(
+      builder: (context, setState) {
+        List<Map<String, dynamic>> filtered = availableWords.where((word) {
+          final text = searchController.text.toLowerCase();
+          final isInPractice = currentPracticeWords.any(
+            (w) => w['id'] == word['id'],
+          );
+          return word['word'].toString().toLowerCase().contains(text) &&
+              !isInPractice;
+        }).toList();
+
+        return AlertDialog(
+          titlePadding: const EdgeInsets.only(top: 12, right: 8),
+          contentPadding: const EdgeInsets.all(12),
+          title: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text("Chọn từ để luyện tập"),
+              IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: 460,
+            child: Column(
+              children: [
+                TextField(
+                  controller: searchController,
+                  decoration: InputDecoration(
+                    hintText: "Tìm từ...",
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        searchController.clear();
+                        setState(() {});
+                      },
+                    ),
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+                const SizedBox(height: 12),
+
+                // 👉 Wrap hiển thị các từ đã chọn
+                if (selectedIds.isNotEmpty)
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: selectedIds.map((id) {
+                            final word = availableWords.firstWhere(
+                              (w) => w['id'] == id,
+                            );
+                            return GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  selectedIds.remove(id);
+                                });
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color.fromARGB(
+                                    255,
+                                    220,
+                                    234,
+                                    210,
+                                  ),
+                                  borderRadius: BorderRadius.circular(50),
+                                  border: Border.all(
+                                    color: const Color.fromARGB(
+                                      255,
+                                      124,
+                                      193,
+                                      124,
+                                    ),
+                                  ),
+                                ),
+                                child: Text(
+                                  word['word'],
+                                  style: const TextStyle(
+                                    color: Color.fromARGB(
+                                      255,
+                                      124,
+                                      193,
+                                      124,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                      ElevatedButton(
+                        onPressed: () {
+                          setState(() {
+                            selectedIds.clear();
+                          });
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.grey,
+                        ),
+                        child: const Text('Bỏ chọn'),
+                      ),
+                    ],
+                  ),
+
+                const SizedBox(height: 12),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: filtered.length,
+                    itemBuilder: (context, index) {
+                      final word = filtered[index];
+                      final id = word['id'];
+                      return CheckboxListTile(
+                        title: Text(word['word']),
+                        subtitle: Text(word['meaning']),
+                        value: selectedIds.contains(id),
+                        onChanged: (bool? value) {
+                          setState(() {
+                            if (value == true) {
+                              selectedIds.add(id);
+                            } else {
+                              selectedIds.remove(id);
+                            }
+                          });
+                        },
+                      );
+                    },
+                  ),
+                ),
+
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    Future.delayed(const Duration(milliseconds: 50), () {
+                      final selectedWords = availableWords
+                          .where((w) => selectedIds.contains(w['id']))
+                          .toList();
+                      onWordsSelected(selectedWords);
+                    });
+                  },
+                  child: const Text('Luyện tập'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    ),
+  );
+}
+
+void showEditPracticeWordsPopup(
+  BuildContext context,
+  List<Map<String, dynamic>> practiceWords,
+  void Function(List<Map<String, dynamic>>) onWordsRemoved,
+) {
+  List<String> selectedIds = [];
+
+  showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(
+      builder: (context, setState) {
+        return AlertDialog(
+          titlePadding: const EdgeInsets.only(top: 12, right: 8, left: 16),
+          contentPadding: const EdgeInsets.all(12),
+          title: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text("Sửa danh sách luyện tập"),
+              Row(
+                children: [
+                  if (selectedIds.isNotEmpty)
+                    TextButton(
+                      onPressed: () {
+                        setState(() {
+                          selectedIds.clear();
+                        });
+                      },
+                      style: TextButton.styleFrom(
+                        shape: const CircleBorder(),
+                        backgroundColor: Colors.grey.shade300,
+                      ),
+                      child: const Icon(Icons.remove_done, color: Colors.black),
+                    ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: 400,
+            child: ListView.builder(
+              itemCount: practiceWords.length,
+              itemBuilder: (context, index) {
+                final word = practiceWords[index];
+                final id = word['id'];
+                return CheckboxListTile(
+                  value: selectedIds.contains(id),
+                  onChanged: (bool? value) {
+                    setState(() {
+                      if (value == true) {
+                        selectedIds.add(id);
+                      } else {
+                        selectedIds.remove(id);
+                      }
+                    });
+                  },
+                  title: Text(word['word']),
+                  subtitle: Text(word['meaning']),
+                );
+              },
+            ),
+          ),
+          actions: [
+            if (selectedIds.isNotEmpty)
+              ElevatedButton(
+                onPressed: () {
+                  final removedWords = practiceWords
+                      .where((w) => selectedIds.contains(w['id']))
+                      .toList();
+                  onWordsRemoved(removedWords);
+                  Navigator.pop(context);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.redAccent,
+                ),
+                child: const Text("Xóa"),
+              ),
+          ],
+        );
+      },
+    ),
+  );
 }

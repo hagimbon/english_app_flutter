@@ -3,8 +3,8 @@ import 'dart:typed_data'; // ✅ để dùng Uint8List
 import 'package:image/image.dart' as img; // ✅ để resize ảnh
 import 'package:image_picker/image_picker.dart'; // ✅ để chọn ảnh từ thư viện
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:hive/hive.dart';
-import 'models/word_model.dart'; // 👈 đường dẫn này cần đúng với vị trí file bố đã lưu
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:english_app/word_model.dart';
 
 class AddWordScreen extends StatefulWidget {
   final List<Map<String, dynamic>> existingWords;

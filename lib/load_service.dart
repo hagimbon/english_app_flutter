@@ -1,6 +1,6 @@
-import 'package:hive/hive.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'word_model.dart'; // 👈 thêm dòng này để biết WordModel là gì
+import 'package:english_app/word_model.dart';
 
 class LoadService {
   static final Future<Box> _unlearnedBox = Hive.openBox('unlearned_words');
