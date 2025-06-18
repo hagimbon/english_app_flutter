@@ -6,6 +6,11 @@ import 'package:path_provider/path_provider.dart';
 import 'add_word_screen.dart';
 import 'package:flutter/material.dart';
 import 'dart:typed_data';
+import 'package:hive/hive.dart';
+import 'package:english_app/word_model.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'main.dart';
+import 'main_tab.dart';
 
 List<Map<String, dynamic>> learnedWords = [
   {'word': 'apple', 'meaning': 'quả táo', 'phonetic': '/ˈæp.əl/'},
@@ -26,12 +31,14 @@ class TestTab extends StatefulWidget {
   final List<Map<String, dynamic>> words;
   final List<Map<String, dynamic>> unlearnedWords;
   final List<Map<String, dynamic>> practiceWords; // ✅ thêm dòng này
+  final bool isOnline;
 
   const TestTab({
     super.key,
     required this.words,
     required this.unlearnedWords,
     required this.practiceWords, // ✅ thêm dòng này
+    required this.isOnline,
   });
 
   @override
@@ -41,6 +48,8 @@ class TestTab extends StatefulWidget {
 class _TestTabState extends State<TestTab> {
   late PageController _controller;
   late List<Map<String, dynamic>> practiceWords;
+  Map<String, bool> showHintButton = {}; // ✅ Cờ để hiện nút gợi ý theo từ
+  Map<String, int> wrongAttempts = {}; // ✅ Đếm số lần sai cho từng từ
 
   @override
   void initState() {
@@ -59,7 +68,25 @@ class _TestTabState extends State<TestTab> {
   Future<void> savePracticeWords() async {
     final dir = await getApplicationDocumentsDirectory();
     final file = File('${dir.path}/practice_words.json');
-    await file.writeAsString(jsonEncode(practiceWords));
+
+    // Tạo danh sách mới có chứa trạng thái đầy đủ cho mỗi từ
+    final dataToSave = practiceWords.map((word) {
+      return {
+        'id': word['id'],
+        'word': word['word'],
+        'meaning': word['meaning'],
+        'phonetic': word['phonetic'],
+        'selectedAnswer': word['selectedAnswer'],
+        'isCorrect': word['isCorrect'],
+        'wrongAttempts': word['wrongAttempts'],
+        'showHint': word['showHint'],
+        'wasHinted': word['wasHinted'],
+        'isDone': word['isDone'] ?? false,
+      };
+    }).toList();
+
+    await file.writeAsString(jsonEncode(dataToSave));
+    print('✅ Đã lưu trạng thái luyện tập vào file practice_words.json');
   }
 
   Future<void> loadPracticeWords() async {
@@ -70,11 +97,24 @@ class _TestTabState extends State<TestTab> {
       final content = await file.readAsString();
       final List<dynamic> data = jsonDecode(content);
       setState(() {
-        practiceWords = data.cast<Map<String, dynamic>>();
-        print(
-          'Đã load ${practiceWords.length} từ luyện tập',
-        ); // ✅ Thêm dòng này vào trong setState
+        practiceWords = data
+            .map<Map<String, dynamic>>(
+              (w) => {
+                'id': w['id'],
+                'word': w['word'],
+                'meaning': w['meaning'],
+                'phonetic': w['phonetic'],
+                'selectedAnswer': w['selectedAnswer'],
+                'isCorrect': w['isCorrect'],
+                'wrongAttempts': w['wrongAttempts'] ?? 0,
+                'showHint': w['showHint'] ?? false,
+                'wasHinted': w['wasHinted'] ?? false,
+                'isDone': w['isDone'] ?? false,
+              },
+            )
+            .toList();
       });
+      print('✅ Đã khôi phục trạng thái từ file practice_words.json');
     } else {
       practiceWords = [];
     }
@@ -138,10 +178,9 @@ class _TestTabState extends State<TestTab> {
           PracticeBoxes(
             words: widget.words,
             unlearnedWords: widget.unlearnedWords,
-            practiceWords: practiceWords, // ✅ Không cần sửa dòng này
-            key: ValueKey(
-              practiceWords.length,
-            ), // ✅ Thêm dòng này để buộc widget vẽ lại khi có dữ liệu mới
+            practiceWords: practiceWords,
+            isOnline: widget.isOnline, // ✅ phải có dòng này
+            key: ValueKey(practiceWords.length),
           ),
         ],
       ),
@@ -414,22 +453,26 @@ class PracticeBoxes extends StatefulWidget {
   final List<Map<String, dynamic>> words;
   final List<Map<String, dynamic>> unlearnedWords;
   final List<Map<String, dynamic>> practiceWords;
+  final bool isOnline;
 
   const PracticeBoxes({
     super.key,
     required this.words,
     required this.unlearnedWords,
     required this.practiceWords,
+    required this.isOnline,
   });
 
   @override
-  State<PracticeBoxes> createState() => _PracticeBoxesState();
+  State<PracticeBoxes> createState() => PracticeBoxesState();
 }
 
-class _PracticeBoxesState extends State<PracticeBoxes> {
+class PracticeBoxesState extends State<PracticeBoxes> {
   late List<Map<String, dynamic>> practiceWords;
   late List<Map<String, dynamic>> unlearnedWords;
   late List<Map<String, dynamic>> words;
+  bool hasShownCompletionDialog = false;
+  bool isLoading = false;
 
   @override
   void initState() {
@@ -445,57 +488,278 @@ class _PracticeBoxesState extends State<PracticeBoxes> {
     await file.writeAsString(jsonEncode(practiceWords));
   }
 
+  void moveWordsToLearned() async {
+    final box = Hive.box<WordModel>('wordsBox');
+    final learnedWords = practiceWords
+        .where((w) => w['isDone'] == true)
+        .toList();
+
+    for (var word in learnedWords) {
+      // 👉 Xoá các flag tạm thời trước khi lưu
+      word.remove('isCorrect');
+      word.remove('selectedAnswer');
+      word.remove('wasHinted');
+      word.remove('wrongAttempts');
+      word.remove('showHint');
+      word['isDone'] = false;
+
+      // 👉 Tạo đối tượng model chuẩn để lưu
+      final model = WordModel(
+        id: word['id'],
+        word: word['word'],
+        meaning: word['meaning'],
+        phonetic: word['phonetic'] ?? '',
+        usage: word['usage'] ?? '',
+        examples: List<Map<String, String>>.from(word['examples'] ?? []),
+        imageBytes: word['imageBytes']?.cast<int>(),
+        isLearned: true,
+      );
+
+      await box.put(model.id, model); // ✅ Lưu vào Hive
+
+      // ✅ Nếu online và không phải từ offline thì đồng bộ lên Firebase
+      if (mainTabStateMounted &&
+          mainTabStateGlobalKey.currentState?.isOnline == true &&
+          !word['id'].toString().startsWith('offline_')) {
+        FirebaseFirestore.instance.collection('words').doc(word['id']).update({
+          'isLearned': true,
+        });
+      }
+    }
+
+    // 👉 Cập nhật lại danh sách trong app
+    setState(() {
+      // Xoá khỏi danh sách từ chưa học
+      for (var word in learnedWords) {
+        unlearnedWords.removeWhere((w) => w['id'] == word['id']);
+      }
+
+      // Xoá khỏi danh sách đang luyện tập
+      practiceWords.removeWhere(
+        (w) => learnedWords.any((lw) => lw['id'] == w['id']),
+      );
+    });
+
+    savePracticeWords(); // ✅ Lưu lại file JSON tạm
+
+    if (mainTabStateMounted) {
+      mainTabStateGlobalKey.currentState?.loadWords();
+    }
+
+    setState(() {
+      for (var word in learnedWords) {
+        // Xoá flag tạm
+        word.remove('isCorrect');
+        word.remove('selectedAnswer');
+        word.remove('wasHinted');
+        word.remove('wrongAttempts');
+        word.remove('showHint');
+        word['isDone'] = false;
+
+        // ✅ Cập nhật trạng thái học
+        final model = WordModel(
+          id: word['id'],
+          word: word['word'],
+          meaning: word['meaning'],
+          phonetic: word['phonetic'] ?? '',
+          usage: word['usage'] ?? '',
+          examples: List<Map<String, String>>.from(word['examples'] ?? []),
+          imageBytes: word['imageBytes']?.cast<int>(),
+          isLearned: true,
+        );
+        box.put(word['id'], model); // ✅ Lưu vào Hive
+
+        // ✅ Gỡ khỏi danh sách từ chưa học
+        unlearnedWords.removeWhere((w) => w['id'] == word['id']);
+      }
+
+      // ✅ Gỡ khỏi practiceWords
+      practiceWords.removeWhere(
+        (w) => learnedWords.any((lw) => lw['id'] == w['id']),
+      );
+    });
+
+    savePracticeWords(); // lưu lại file cache
+  }
+
+  void checkPracticeCompletion() {
+    if (hasShownCompletionDialog ||
+        !practiceWords.every(
+          (w) => w['isDone'] == true || w['wasHinted'] == true,
+        )) {
+      return;
+    }
+    final allDone = practiceWords.every(
+      (w) => w['isDone'] == true && (w['wasHinted'] != true),
+    );
+    final hasHinted = practiceWords.any((w) => w['wasHinted'] == true);
+
+    if (practiceWords.isEmpty) return;
+    hasShownCompletionDialog = true;
+
+    if (hasHinted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AlertDialog(
+          title: const Text('⚠️ Bạn cần cố gắng hơn nữa'),
+          content: const Text('Một số câu bạn đã dùng gợi ý.'),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                setState(() {
+                  isLoading = true;
+                });
+
+                await Future.delayed(const Duration(milliseconds: 500));
+
+                setState(() {
+                  practiceWords.shuffle();
+                  for (int i = 0; i < practiceWords.length; i++) {
+                    final word = practiceWords[i];
+                    final reset = {
+                      'id': word['id'],
+                      'word': word['word'],
+                      'meaning': word['meaning'],
+                      'phonetic': word['phonetic'],
+                    };
+                    practiceWords[i] = reset;
+
+                    final exists = unlearnedWords.any(
+                      (w) => w['id'] == reset['id'],
+                    );
+                    if (!exists) {
+                      unlearnedWords.add(reset);
+                    }
+                  }
+
+                  hasShownCompletionDialog = false;
+                  isLoading = false;
+                });
+
+                savePracticeWords();
+                if (context.mounted) Navigator.pop(context);
+              },
+
+              child: const Text('Luyện tập lại'),
+            ),
+          ],
+        ),
+      );
+    } else if (allDone) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AlertDialog(
+          title: const Text('🎉 Bạn đã trả lời đúng hết!'),
+          content: const Text(
+            'Bạn có muốn di chuyển những từ này vào danh sách "Từ đã học" không?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                moveWordsToLearned();
+                Navigator.pop(context);
+              },
+              child: const Text('Có'),
+            ),
+            TextButton(
+              onPressed: () async {
+                setState(() {
+                  isLoading = true;
+                });
+
+                await Future.delayed(const Duration(milliseconds: 500));
+
+                setState(() {
+                  practiceWords.shuffle();
+                  for (int i = 0; i < practiceWords.length; i++) {
+                    final word = practiceWords[i];
+                    final reset = {
+                      'id': word['id'],
+                      'word': word['word'],
+                      'meaning': word['meaning'],
+                      'phonetic': word['phonetic'],
+                    };
+                    practiceWords[i] = reset;
+
+                    final exists = unlearnedWords.any(
+                      (w) => w['id'] == reset['id'],
+                    );
+                    if (!exists) {
+                      unlearnedWords.add(reset);
+                    }
+                  }
+
+                  hasShownCompletionDialog = false;
+                  isLoading = false;
+                });
+
+                savePracticeWords();
+                if (context.mounted) Navigator.pop(context);
+              },
+
+              child: const Text('Học lại'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return buildPracticeBoxes(context);
   }
 
   Widget buildPracticeBoxes(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          // ✅ PHẦN HIỂN THỊ BOX BÊN DƯỚI
-          Expanded(
-            child: unlearnedWords.isEmpty
-                ? Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text(
-                        'Không có từ để luyện tập',
-                        style: TextStyle(fontSize: 18, color: Colors.red),
-                      ),
-                      const SizedBox(height: 12),
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => AddWordScreen(
-                                existingWords: const [],
-                                isOnline: false,
-                              ),
+    return isLoading
+        ? const Center(child: CircularProgressIndicator())
+        : Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                // ✅ PHẦN HIỂN THỊ BOX BÊN DƯỚI
+                Expanded(
+                  child: unlearnedWords.isEmpty
+                      ? Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Text(
+                              'Không có từ để luyện tập',
+                              style: TextStyle(fontSize: 18, color: Colors.red),
                             ),
-                          );
-                        },
-                        icon: const Icon(Icons.add),
-                        label: const Text('Thêm từ'),
-                      ),
-                    ],
-                  )
-                : Row(
-                    children: [
-                      _buildBox(context, 'Từ mới', practiceWords),
-                      const SizedBox(width: 8),
-                      _buildBox(context, 'Từ đã học', const []),
-                      const SizedBox(width: 8),
-                      _buildFlashCardBox(context),
-                    ],
-                  ),
-          ),
-        ],
-      ),
-    );
+                            const SizedBox(height: 12),
+                            ElevatedButton.icon(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => AddWordScreen(
+                                      existingWords: const [],
+                                      isOnline: false,
+                                    ),
+                                  ),
+                                );
+                              },
+                              icon: const Icon(Icons.add),
+                              label: const Text('Thêm từ'),
+                            ),
+                          ],
+                        )
+                      : Row(
+                          children: [
+                            _buildBox(context, 'Từ mới', practiceWords),
+                            const SizedBox(width: 8),
+                            _buildBox(context, 'Từ đã học', const []),
+                            const SizedBox(width: 8),
+                            _buildFlashCardBox(context),
+                          ],
+                        ),
+                ),
+              ],
+            ),
+          );
   }
 
   Widget _buildFlashCardBox(BuildContext ctx) {
@@ -567,14 +831,41 @@ class _PracticeBoxesState extends State<PracticeBoxes> {
                           removed,
                         ) {
                           setState(() {
+                            // 👉 Xóa từ khỏi danh sách luyện tập
                             practiceWords.removeWhere(
                               (w) => removed.any((r) => r['id'] == w['id']),
                             );
-                            unlearnedWords.addAll(removed);
+
+                            // 👉 Đặt lại trạng thái cũ (reset flag như mới)
+                            final resetWords = removed.map((word) {
+                              return {
+                                ...word,
+                                'isCorrect': null,
+                                'selectedAnswer': null,
+                                'wasHinted': null,
+                                'showHint': null,
+                                'wrongAttempts': null,
+                                'isDone': null,
+                              };
+                            }).toList();
+
+                            // 👉 Thêm về danh sách "unlearned" (từ chưa học)
+                            for (var word in resetWords) {
+                              final exists = unlearnedWords.any(
+                                (w) => w['id'] == word['id'],
+                              );
+                              if (!exists) {
+                                unlearnedWords.add(
+                                  word,
+                                ); // chỉ thêm nếu chưa có
+                              }
+                            }
                           });
+
                           savePracticeWords();
                         });
                       },
+
                       icon: const Icon(Icons.edit),
                       style: IconButton.styleFrom(
                         shape: const CircleBorder(),
@@ -582,7 +873,7 @@ class _PracticeBoxesState extends State<PracticeBoxes> {
                       ),
                     ),
                   ],
-                  Text('${data.length}'),
+                  Text('${data.where((w) => w['isDone'] != true).length}'),
                 ],
               ),
               const SizedBox(height: 8),
@@ -629,9 +920,17 @@ class _PracticeBoxesState extends State<PracticeBoxes> {
                         itemCount: data.length,
                         itemBuilder: (context, index) {
                           final word = data[index];
-                          return _WordChoiceTile(
+                          return WordChoiceTile(
+                            key: ValueKey(
+                              '${word['id']}_${word['selectedAnswer'] ?? 'none'}_${word['isDone'] ?? '0'}',
+                            ),
                             word: word,
                             allWords: unlearnedWords,
+                            onSave: () {
+                              savePracticeWords();
+                              setState(() {}); // ✅ buộc cập nhật lại số từ
+                            },
+                            onCheckDone: checkPracticeCompletion,
                           );
                         },
                       ),
@@ -644,35 +943,83 @@ class _PracticeBoxesState extends State<PracticeBoxes> {
   }
 }
 
-class _WordChoiceTile extends StatefulWidget {
+class WordChoiceTile extends StatefulWidget {
   final Map<String, dynamic> word;
   final List<Map<String, dynamic>> allWords;
+  final VoidCallback onSave; // ✅ thêm dòng này
+  final VoidCallback? onCheckDone;
 
-  const _WordChoiceTile({required this.word, required this.allWords});
+  const WordChoiceTile({
+    Key? key, // ✅ thêm dòng này
+    required this.word,
+    required this.allWords,
+    required this.onSave, // ✅ thêm dòng này
+    this.onCheckDone,
+  });
 
   @override
-  State<_WordChoiceTile> createState() => _WordChoiceTileState();
+  State<WordChoiceTile> createState() => _WordChoiceTileState(); // ✅ THÊM DÒNG NÀY
 }
 
-class _WordChoiceTileState extends State<_WordChoiceTile> {
+class _WordChoiceTileState extends State<WordChoiceTile> {
   String? selected;
   bool? isCorrect;
+  bool wasHinted = false; // ✅ THÊM biến này vào đầu class
+  bool wasWrongedRecently = false;
   List<String> options = [];
+  Map<String, bool> showHintButton = {};
+  Map<String, int> wrongAttempts = {};
+
+  int wrongCount = 0;
+  bool showHint = false;
 
   @override
   void initState() {
     super.initState();
     generateOptions();
+
+    selected = widget.word['selectedAnswer'];
+    isCorrect = widget.word['isCorrect'];
+  }
+
+  @override
+  void didUpdateWidget(covariant WordChoiceTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // Cập nhật lại state nếu widget.word thay đổi
+    if (oldWidget.word['id'] != widget.word['id'] ||
+        oldWidget.word['selectedAnswer'] != widget.word['selectedAnswer'] ||
+        oldWidget.word['isCorrect'] != widget.word['isCorrect']) {
+      setState(() {
+        selected = widget.word['selectedAnswer'];
+        isCorrect = widget.word['isCorrect'];
+      });
+    }
   }
 
   void generateOptions() {
-    options = [widget.word['meaning']];
-    final otherWords = widget.allWords.where((w) => w != widget.word).toList();
-    otherWords.shuffle();
-    for (var i = 0; i < 5 && i < otherWords.length; i++) {
-      options.add(otherWords[i]['meaning']);
+    options = [];
+
+    final correctMeaning = widget.word['meaning'] as String; // ép kiểu tại đây
+    final otherWords = widget.allWords
+        .where((w) => w['id'] != widget.word['id'])
+        .toList();
+
+    options = [correctMeaning]; // luôn có nghĩa đúng ở đầu
+
+    final Set<String> seen = {correctMeaning}; // ✅ chỉ khai báo 1 lần
+
+    // Lấy 5 nghĩa sai
+    for (var word in otherWords) {
+      final meaning = word['meaning'];
+      if (meaning != null && !seen.contains(meaning)) {
+        options.add(meaning);
+        seen.add(meaning);
+      }
+      if (options.length >= 6) break; // 1 đúng + 5 sai
     }
-    options.shuffle();
+
+    options.shuffle(); // đảo vị trí ngẫu nhiên
   }
 
   void onSelect(String? value) {
@@ -680,43 +1027,127 @@ class _WordChoiceTileState extends State<_WordChoiceTile> {
       selected = value;
       isCorrect = (value == widget.word['meaning']);
 
+      widget.word['selectedAnswer'] = value;
+      widget.word['isCorrect'] = isCorrect;
+      widget.word['wrongAttempts'] = (widget.word['wrongAttempts'] ?? 0) + 1;
+
+      // ✅ Nếu sai và đã sai đủ 3 lần → hiển thị gợi ý
       if (!isCorrect!) {
+        if (widget.word['wrongAttempts']! >= 3) {
+          widget.word['showHint'] = true;
+        }
+
+        wasWrongedRecently = true;
         Future.delayed(const Duration(seconds: 1), () {
-          setState(() {
-            selected = null;
-            isCorrect = null;
-          });
+          if (mounted) {
+            setState(() {
+              wasWrongedRecently = false;
+              selected = null;
+            });
+          }
         });
+      } else {
+        widget.word['showHint'] = false;
+        widget.word['wrongAttempts'] = 0;
+        widget.word['isDone'] = true;
       }
+    });
+
+    widget.onSave();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      PracticeBoxesState? parentState = context
+          .findAncestorStateOfType<PracticeBoxesState>();
+      parentState?.checkPracticeCompletion();
+    });
+
+    if (widget.word['isDone'] == true) {
+      widget.onCheckDone?.call(); // Gọi kiểm tra khi làm xong từ
+    }
+  }
+
+  void resetState() {
+    setState(() {
+      wrongCount = 0;
+      showHint = false;
+      selected = null;
+      isCorrect = null;
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    // ✅ Lấy cờ trạng thái từ word
+    final wrongCount = widget.word['wrongAttempts'] ?? 0;
+    final showHint = widget.word['showHint'] ?? false;
+    final wasHinted = widget.word['wasHinted'] ?? false;
+    final isCorrectNow = widget.word['isCorrect'] == true;
+
+    // ✅ Xác định màu nền
+    // ✅ Xác định màu nền
+    Color? bgColor;
+    if (wasWrongedRecently) {
+      bgColor = Colors.red.shade200; // 🔴 Sai tạm thời
+    } else if (wasHinted) {
+      bgColor = const Color(0xFFb9b9b9); // màu xám
+    } else if (showHint) {
+      bgColor = Colors.red.shade200;
+    } else if (isCorrectNow) {
+      bgColor = Colors.green.shade200;
+    }
+
     return Card(
-      color: isCorrect == true
-          ? Colors.green.shade200
-          : isCorrect == false
-          ? Colors.red.shade200
-          : null,
+      color: bgColor,
       child: Padding(
         padding: const EdgeInsets.all(8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(widget.word['word'], style: const TextStyle(fontSize: 20)),
-            if (selected == null)
+
+            // Dropdown chọn nghĩa
+            if (!isCorrectNow)
               DropdownButton<String>(
+                value: options.contains(selected) ? selected : null,
                 hint: const Text("Chọn nghĩa"),
                 items: options
                     .map((m) => DropdownMenuItem(value: m, child: Text(m)))
                     .toList(),
                 onChanged: onSelect,
               ),
+
+            // Nếu đúng → hiện nghĩa
             if (selected != null && isCorrect == true)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Text('🇻🇳 ${widget.word['meaning']}'),
+              ),
+
+            // ✅ Nút Gợi ý
+            if (showHint &&
+                (selected == null || selected != widget.word['meaning']))
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      selected = widget.word['meaning'];
+                      isCorrect = true;
+                      widget.word['selectedAnswer'] = widget.word['meaning'];
+                      widget.word['isCorrect'] = true;
+                      widget.word['wasHinted'] = true;
+                      widget.word['showHint'] = false;
+                      widget.word['wrongAttempts'] = 0;
+                      widget.word['isDone'] = true;
+                    });
+                    widget.onSave();
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF87b470),
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Gợi ý'),
+                ),
               ),
           ],
         ),
@@ -744,6 +1175,7 @@ class _FlashCardQuizBoxState extends State<FlashCardQuizBox> {
   bool showHint = false;
   bool showExamples = false;
   bool isFinished = false;
+  bool wasWrongedRecently = false;
   MemoryImage? firstImage; // ✅ khai báo biến ảnh đầu tiên
   List<Map<String, dynamic>> flashWords = [];
   List<String> choices = [];
@@ -1010,10 +1442,16 @@ class _FlashCardQuizBoxState extends State<FlashCardQuizBox> {
       selected = value;
       isCorrect = value == flashWords[currentIndex]['meaning'];
       if (!isCorrect!) {
-        wrongCount++;
-        if (wrongCount >= 3) showHint = true;
-      } else {
-        Future.delayed(const Duration(seconds: 1), nextCard);
+        wasWrongedRecently = true;
+
+        Future.delayed(const Duration(seconds: 1), () {
+          if (mounted) {
+            setState(() {
+              wasWrongedRecently = false;
+              selected = null; // ✅ Cho phép chọn lại
+            });
+          }
+        });
       }
     });
   }
@@ -1139,12 +1577,7 @@ void showSelectWordsPopup(
                                 child: Text(
                                   word['word'],
                                   style: const TextStyle(
-                                    color: Color.fromARGB(
-                                      255,
-                                      124,
-                                      193,
-                                      124,
-                                    ),
+                                    color: Color.fromARGB(255, 124, 193, 124),
                                   ),
                                 ),
                               ),
@@ -1197,7 +1630,18 @@ void showSelectWordsPopup(
                     Future.delayed(const Duration(milliseconds: 50), () {
                       final selectedWords = availableWords
                           .where((w) => selectedIds.contains(w['id']))
+                          .map((word) {
+                            final newWord = Map<String, dynamic>.from(word);
+                            newWord.remove('isCorrect');
+                            newWord.remove('selectedAnswer');
+                            newWord.remove('wasHinted');
+                            newWord.remove('wrongAttempts');
+                            newWord.remove('showHint');
+                            newWord.remove('isDone');
+                            return newWord;
+                          })
                           .toList();
+
                       onWordsSelected(selectedWords);
                     });
                   },
@@ -1286,9 +1730,25 @@ void showEditPracticeWordsPopup(
                   final removedWords = practiceWords
                       .where((w) => selectedIds.contains(w['id']))
                       .toList();
-                  onWordsRemoved(removedWords);
+
+                  // 👉 Reset trạng thái giống từ mới
+                  final resetWords = removedWords.map((word) {
+                    return {
+                      ...word,
+                      'isCorrect': null,
+                      'selectedAnswer': null,
+                      'wasHinted': null,
+                      'wrongAttempts': null,
+                      'showHint': null,
+                      'isDone': null,
+                    };
+                  }).toList();
+
+                  onWordsRemoved(resetWords); // Gửi lại bản reset
+
                   Navigator.pop(context);
                 },
+
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.redAccent,
                 ),
