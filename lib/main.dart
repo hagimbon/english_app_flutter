@@ -135,9 +135,9 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
   @override
   void initState() {
     super.initState();
+    mainTabStateMounted = true;
     loadWords(); // tải từ Firestore lúc mở app
     _checkConnectivity(); // kiểm tra trạng thái mạng ban đầu
-    mainTabStateMounted = true;
 
     Connectivity().onConnectivityChanged.listen((result) async {
       final nowOnline = result != ConnectivityResult.none;
@@ -326,6 +326,7 @@ class _MainTabNavigatorState extends State<MainTabNavigator> {
       words: learnedOnly,
       unlearnedWords: unlearnedWords,
       practiceWords: practiceWords, // ✅ THÊM DÒNG NÀY
+      isOnline: isOnline,
     ),
   ];
 
@@ -451,6 +452,7 @@ class _WordListTabState extends State<WordListTab> {
           words: selectedWords,
           unlearnedWords: [], // nếu cần
           practiceWords: selectedWords, // 👈 bổ sung dòng này để không lỗi
+          isOnline: widget.isOnline,
         ),
       ),
     );
@@ -864,7 +866,7 @@ class MyApp extends StatelessWidget {
       title: 'English App',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(primarySwatch: Colors.blue),
-      home: const MainTabNavigator(), // 👈 Đây là màn hình chính của app
+      home: MainTabNavigator(key: mainTabStateGlobalKey), // ✅ chính xác
     );
   }
 }
